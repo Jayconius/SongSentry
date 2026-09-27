@@ -65,7 +65,29 @@ namespace SongSentry
         public bool AutoSkip;                   // send "next track" to the player when a risky song starts
         public bool ListenToAudio = true;
         public bool UseAcoustId = true;         // free, no key: recognises songs whose start was heard       // recognise songs in the channels' actual audio (song memory + online keys)
-        public string AudDKey = "", AudioTagKey = "";   // optional, user-supplied (stored encrypted); never shipped with a key
+        public string AudDKey = "", AudioTagKey = "";
+        // What to do per risk level (who released the song). Defaults are cautious: only stream-safe music is ignored.
+        public RiskAction RiskMajor = RiskAction.Protect, RiskIndependent = RiskAction.Protect, RiskUnknown = RiskAction.Protect, RiskSafe = RiskAction.Ignore;
+        public SafeLists Lists = new SafeLists();
+        public string PearToken = ""; public int PearPort = PearDesktop.DefaultPort;
+
+        public RiskAction ActionFor(RiskLevel l)
+        {
+            switch (l)
+            {
+                case RiskLevel.Major: return RiskMajor;
+                case RiskLevel.Independent: return RiskIndependent;
+                case RiskLevel.Safe: return RiskSafe;
+                default: return RiskUnknown;
+            }
+        }
+
+        /// "All music from this app is safe" (allow list entry "app:<key>").
+        public bool IsSafeApp(string appKey)
+        {
+            if (string.IsNullOrEmpty(appKey)) return false;
+            lock (Sync) return Allow.Any(e => e.Equals("app:" + appKey, StringComparison.OrdinalIgnoreCase));
+        }   // optional, user-supplied (stored encrypted); never shipped with a key
         public List<Channel> Channels = new List<Channel>();
         public List<string> Hidden = new List<string>();  // OBS input names hidden from the Channels list
         public List<string> Allow = new List<string>();   // "artist:<name>" or "track:<artist> - <title>" (any case)
@@ -111,7 +133,8 @@ namespace SongSentry
                 if (e.StartsWith("track:"))
                 {
                     int d = e.IndexOf(" - ", 6, StringComparison.Ordinal);
-                    if (d > 0 && TextNorm.Norm(e.Substring(6, d - 6)) == TextNorm.Norm(a) && TextNorm.Norm(e.Substring(d + 3)) == TextNorm.Norm(t)) return true;
+                    if (d > 0 && SongMatchText.Same(e.Substring(6, d - 6), e.Substring(d + 3), a, t)) return true;
+                    if (d < 0 && SongMatchText.Title(e.Substring(6)) == SongMatchText.Title(t)) return true;   // "track:Title" without artist
                 }
                 if (e.StartsWith("label:") && lb.Length > 0 && (lb == e.Substring(6) || lb.StartsWith(e.Substring(6) + " ") || lb.StartsWith(e.Substring(6) + ","))) return true;
             }
@@ -132,6 +155,7 @@ namespace SongSentry
             if (e.StartsWith("artist:")) return "Artist  " + e.Substring(7);
             if (e.StartsWith("track:")) return "Song  " + e.Substring(6);
             if (e.StartsWith("label:")) return "Label  " + e.Substring(6);
+            if (e.StartsWith("app:")) return "App  " + AppKey.Pretty(e.Substring(4));
             return e;
         }
 
@@ -142,7 +166,7 @@ namespace SongSentry
             var s = new Settings();
             try
             {
-                if (!File.Exists(PathOf)) return s;
+                if (!File.Exists(PathOf)) { s.Lists.FromJson(null); return s; }   // first run: free stream-safe lists on
                 var d = Json.Read(File.ReadAllText(PathOf, Encoding.UTF8));
                 s.Host = Json.Str(d, "host") ?? s.Host;
                 s.Port = (int)Json.Num(d, "port", s.Port);
@@ -155,6 +179,14 @@ namespace SongSentry
                 s.AutoSkip = Json.Bool(d, "autoSkip", false);
                 s.ListenToAudio = Json.Bool(d, "listenToAudio", true);
                 s.UseAcoustId = Json.Bool(d, "useAcoustId", true);
+                var risk = Json.Obj(d.ContainsKey("risk") ? d["risk"] : null);
+                s.RiskMajor = ParseEnum(Json.Str(risk, "major"), RiskAction.Protect);
+                s.RiskIndependent = ParseEnum(Json.Str(risk, "independent"), RiskAction.Protect);
+                s.RiskUnknown = ParseEnum(Json.Str(risk, "unknown"), RiskAction.Protect);
+                s.RiskSafe = ParseEnum(Json.Str(risk, "safe"), RiskAction.Ignore);
+                s.Lists.FromJson(Json.Obj(d.ContainsKey("lists") ? d["lists"] : null));
+                s.PearToken = Unprotect(Json.Str(d, "pearToken"));
+                s.PearPort = (int)Json.Num(d, "pearPort", PearDesktop.DefaultPort);
                 s.AudDKey = Unprotect(Json.Str(d, "auddKey"));
                 s.AudioTagKey = Unprotect(Json.Str(d, "audioTagKey"));
                 foreach (var c in Json.Objs(d.ContainsKey("channels") ? d["channels"] : null))
@@ -189,6 +221,8 @@ namespace SongSentry
             {
                 var d = Json.Make("host", Host, "port", Port, "password", Protect(Password), "closeToTray", CloseToTray,
                     "startHidden", StartHidden, "paused", Paused, "restoreDelay", RestoreDelay, "restore", Restore.ToString(), "autoSkip", AutoSkip, "listenToAudio", ListenToAudio, "useAcoustId", UseAcoustId,
+                    "risk", Json.Make("major", RiskMajor.ToString(), "independent", RiskIndependent.ToString(), "unknown", RiskUnknown.ToString(), "safe", RiskSafe.ToString()),
+                    "lists", Lists.ToJson(), "pearToken", Protect(PearToken), "pearPort", PearPort,
                     "auddKey", Protect(AudDKey), "audioTagKey", Protect(AudioTagKey), "allow", Allow, "hidden", Hidden,
                     "channels", Channels.Select(c => Json.Make("input", c.Input, "enabled", c.Enabled, "apps", c.Apps,
                         "action", c.Action.ToString(), "duck", c.DuckPercent, "mode", c.Mode.ToString())).ToList());

@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 namespace SongSentry
 {
-    public enum Page { Live, Channels, Recognition, Settings }
+    public enum Page { Live, Channels, Recognition, SafeMusic, Settings }
 
     public sealed class MainForm : Form
     {
@@ -22,6 +22,9 @@ namespace SongSentry
         readonly ObsConnection obs;
         readonly NowPlayingWatcher nowPlaying;
         readonly Recognizer recognizer;
+        readonly PlaylistScanner scanner;
+        string scanApp, pearStatus;
+        bool pearBusy;
         readonly List<KeyValuePair<string, RectangleF>> hits = new List<KeyValuePair<string, RectangleF>>();
         readonly Dictionary<string, float> knobs = new Dictionary<string, float>();
         readonly Font fBrand, fH1, fH2, fBody, fBodyB, fSmall, fTiny, fCaps, fIcon, fIconS, fIconL;
@@ -43,6 +46,8 @@ namespace SongSentry
         public MainForm(Settings settings, Engine engine, ObsConnection obs, NowPlayingWatcher nowPlaying, Recognizer recognizer)
         {
             this.settings = settings; this.engine = engine; this.obs = obs; this.nowPlaying = nowPlaying; this.recognizer = recognizer;
+            scanner = new PlaylistScanner(nowPlaying.Snapshot, nowPlaying.SkipNext, e => engine.AddAllow(e));
+            scanner.Changed += () => { if (!scanner.Running) engine.ScanningApp = null; QueueRepaint(); };
             Text = "SongSentry";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
@@ -165,6 +170,8 @@ namespace SongSentry
             if (id == "opt:skip") return settings.AutoSkip ? 1f : 0f;
             if (id == "opt:listen") return settings.ListenToAudio ? 1f : 0f;
             if (id == "opt:acoustid") return settings.UseAcoustId ? 1f : 0f;
+            if (id.StartsWith("list:")) return settings.Lists.Enabled.Contains(id.Substring(5)) ? 1f : 0f;
+            if (id.StartsWith("safeapp:")) return settings.IsSafeApp(id.Substring(8)) ? 1f : 0f;
             if (id == "opt:startwin") return startWithWindows ? 1f : 0f;
             var c = settings.Find(id.Substring(id.IndexOf(':') + 1));
             return c != null && c.Enabled ? 1f : 0f;
@@ -221,6 +228,7 @@ namespace SongSentry
             if (page == Page.Live) DrawLive(g);
             else if (page == Page.Channels) DrawChannels(g);
             else if (page == Page.Recognition) DrawRecognition(g);
+            else if (page == Page.SafeMusic) DrawSafeMusic(g);
             else DrawSettings(g);
             g.Restore(st);
             DrawToast(g);
@@ -241,7 +249,8 @@ namespace SongSentry
             NavItem(g, Page.Live, Theme.GPulse, "Live", 96);
             NavItem(g, Page.Channels, Theme.GVolume, "Channels", 142);
             NavItem(g, Page.Recognition, Theme.GMusic, "Recognition", 188);
-            NavItem(g, Page.Settings, Theme.GSettings, "Settings", 234);
+            NavItem(g, Page.SafeMusic, Theme.GCheck, "Safe music", 234);
+            NavItem(g, Page.Settings, Theme.GSettings, "Settings", 280);
 
             // OBS connection card
             var card = new RectangleF(14, H - 118, SideW - 28, 102);
@@ -314,6 +323,7 @@ namespace SongSentry
                 case Page.Live: title = "Live"; sub = "What's playing, and what SongSentry is doing about it."; break;
                 case Page.Channels: title = "Channels"; sub = "Pick the OBS sources to protect. Only switched-on sources are ever changed."; break;
                 case Page.Recognition: title = "Recognition"; sub = "How SongSentry recognises songs in your sources' audio."; break;
+                case Page.SafeMusic: title = "Safe music"; sub = "Which songs count as risky, and which are always fine to play."; break;
                 default: title = "Settings"; sub = "OBS connection, your allow list, and behaviour."; break;
             }
             Theme.Text2(g, title, fH1, Theme.Text, new RectangleF(X0, 22, 400, 32), StringAlignment.Near, StringAlignment.Center);
@@ -889,6 +899,197 @@ namespace SongSentry
             try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
         }
 
+        // ------------------------------------------------------------------ Safe music page
+
+        static Color RiskColor(RiskLevel l)
+        {
+            switch (l) { case RiskLevel.Major: return Theme.Coral; case RiskLevel.Independent: return Theme.Amber; case RiskLevel.Safe: return Theme.Accent; default: return Theme.Blue; }
+        }
+
+        static string ActionName(RiskAction a) { return a == RiskAction.Protect ? "Protect" : a == RiskAction.Warn ? "Warn only" : "Ignore"; }
+
+        void DrawSafeMusic(Graphics g)
+        {
+            float y = HeadH + 4, colW = (CW - 24) / 2, rx = X0 + colW + 24;
+
+            // risk levels
+            var rk = new RectangleF(X0, y, colW, 262);
+            Section(g, rk, "RISK LEVELS  ·  WHO RELEASED THE SONG");
+            var levels = new[]
+            {
+                new KeyValuePair<RiskLevel, string>(RiskLevel.Major, "Universal, Sony, Warner & their labels: almost always claimed"),
+                new KeyValuePair<RiskLevel, string>(RiskLevel.Independent, "Indie labels & self-released: often claimed via distributors"),
+                new KeyValuePair<RiskLevel, string>(RiskLevel.Unknown, "Label not found (or still checking)"),
+                new KeyValuePair<RiskLevel, string>(RiskLevel.Safe, "Creative Commons or on a stream-safe list"),
+            };
+            float ly = rk.Y + 40;
+            foreach (var lv in levels)
+            {
+                using (var b = new SolidBrush(RiskColor(lv.Key))) g.FillEllipse(b, rk.X + 18, ly + 8, 9, 9);
+                Theme.Text2(g, RiskInfo.LevelName(lv.Key), fBodyB, Theme.Text, new RectangleF(rk.X + 34, ly, 170, 24), StringAlignment.Near, StringAlignment.Center);
+                Theme.Wrap(g, lv.Value, fTiny, Theme.Dim, new RectangleF(rk.X + 34, ly + 22, colW - 170, 30));
+                var pill = new RectangleF(rk.Right - 130, ly + 6, 112, 28);
+                string pid = "risk:" + lv.Key;
+                RiskAction ra = settings.ActionFor(lv.Key);
+                Theme.Fill(g, pill, 8, hover == pid ? Theme.Hover : Theme.Raised);
+                Theme.Text2(g, ActionName(ra), fSmall, ra == RiskAction.Protect ? Theme.Coral : ra == RiskAction.Warn ? Theme.Amber : Theme.Sub,
+                            new RectangleF(pill.X + 10, pill.Y, pill.Width - 30, pill.Height), StringAlignment.Near, StringAlignment.Center);
+                Theme.Text2(g, Theme.GChevron, fIconS, Theme.Dim, new RectangleF(pill.Right - 22, pill.Y + 1, 14, pill.Height), StringAlignment.Center, StringAlignment.Center);
+                Hit(pid, pill);
+                ly += 54;
+            }
+
+            // safe apps
+            var sa = new RectangleF(X0, rk.Bottom + 16, colW, H - rk.Bottom - 32);
+            Section(g, sa, "SAFE APPS  ·  EVERYTHING THEY PLAY IS FINE");
+            var apps = new List<string>();
+            foreach (var md in engine.Media) if (!apps.Contains(md.App)) apps.Add(md.App);
+            foreach (string a in settings.AllowList().Where(x => x.StartsWith("app:")).Select(x => x.Substring(4))) if (!apps.Contains(a)) apps.Add(a);
+            foreach (string a in new[] { "pretzel", "spotify", "youtube music" }) if (!apps.Contains(a)) apps.Add(a);
+            float ay = sa.Y + 38;
+            foreach (string a in apps.Take(5))
+            {
+                Theme.Text2(g, AppKey.Pretty(a) + (engine.Media.Any(x => x.App == a) ? "" : ""), fBody, Theme.Text, new RectangleF(sa.X + 18, ay, colW - 100, 28), StringAlignment.Near, StringAlignment.Center);
+                Switch(g, "safeapp:" + a, sa.Right - 66, ay + 2, Theme.Accent);
+                ay += 34;
+            }
+
+            // stream-safe lists
+            var sl = new RectangleF(rx, y, colW, 300);
+            Section(g, sl, "STREAM-SAFE LISTS");
+            LinkText(g, "list:import", "Import…", sl.Right - 18, sl.Y + 13, true);
+            float sy = sl.Y + 36;
+            var all = settings.Lists.All.ToList();
+            int shown = 0;
+            foreach (var l in all)
+            {
+                if (sy > sl.Bottom - 34) break;
+                shown++;
+                string name = l.Name + (l.Imported ? "  (" + l.Count + ")" : "");
+                Theme.Text2(g, name, fBody, Theme.Text, new RectangleF(sl.X + 18, sy, colW - 130, 18), StringAlignment.Near, StringAlignment.Center);
+                string note = l.Imported ? (l.Url != null ? "from a URL, refreshed on start" : "imported file") : l.Note;
+                Theme.Text2(g, (l.Paid ? "PAID  ·  " : "") + note, fTiny, l.Paid ? Theme.Amber : Theme.Dim, new RectangleF(sl.X + 18, sy + 17, colW - 130, 14), StringAlignment.Near, StringAlignment.Center);
+                if (l.Imported)
+                {
+                    var del = new RectangleF(sl.Right - 96, sy + 4, 22, 22);
+                    Theme.Text2(g, Theme.GCancel, fIconS, hover == "listdel:" + l.Id ? Theme.Coral : Theme.Dim, del, StringAlignment.Center, StringAlignment.Center);
+                    Hit("listdel:" + l.Id, del);
+                }
+                Switch(g, "list:" + l.Id, sl.Right - 66, sy + 5, Theme.Accent);
+                sy += 31;
+            }
+            if (shown < all.Count) Theme.Text2(g, "+ " + (all.Count - shown) + " more", fTiny, Theme.Dim, new RectangleF(sl.X + 18, sl.Bottom - 24, 100, 16), StringAlignment.Near, StringAlignment.Center);
+
+            // playlists
+            var pl = new RectangleF(rx, sl.Bottom + 16, colW, H - sl.Bottom - 32);
+            Section(g, pl, "PLAYLISTS  ·  MARK A WHOLE PLAYLIST SAFE");
+            Theme.Text2(g, "Scan a playlist (any player)", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 34, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
+            if (scanApp == null) scanApp = engine.Media.Where(x => x.State == PlayState.Playing).Select(x => x.App).FirstOrDefault() ?? engine.Media.Select(x => x.App).FirstOrDefault();
+            var ap = new RectangleF(pl.X + 18, pl.Y + 60, 150, 30);
+            Theme.Fill(g, ap, 8, hover == "scan:app" ? Theme.Hover : Theme.Raised);
+            Theme.Text2(g, scanApp == null ? "No player open" : AppKey.Pretty(scanApp), fSmall, Theme.Text, new RectangleF(ap.X + 10, ap.Y, ap.Width - 30, ap.Height), StringAlignment.Near, StringAlignment.Center);
+            Theme.Text2(g, Theme.GChevron, fIconS, Theme.Dim, new RectangleF(ap.Right - 22, ap.Y + 1, 14, ap.Height), StringAlignment.Center, StringAlignment.Center);
+            Hit("scan:app", ap);
+            Button(g, "scan:go", scanner.Running ? "Stop" : "Scan", ap.Right + 10, ap.Y - 1, 84, !scanner.Running);
+            Theme.Wrap(g, string.IsNullOrEmpty(scanner.Status) ? "Start your stream-safe playlist, then Scan: SongSentry skips through it and marks every song safe."
+                       : scanner.Status, fTiny, scanner.Running ? Theme.Accent : Theme.Dim, new RectangleF(pl.X + 18, pl.Y + 96, colW - 36, 30));
+            Theme.Text2(g, "Pear Desktop (YouTube Music)", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 130, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
+            float pbx = Button(g, "pear:go", pearBusy ? "Waiting…" : "Allow my queue", pl.X + 18, pl.Y + 154, 0, false);
+            Theme.Wrap(g, pearStatus ?? "Marks Pear's whole queue safe. Needs its API Server plugin; Pear asks once.",
+                       fTiny, pearStatus != null ? Theme.Sub : Theme.Dim, new RectangleF(pbx + 12, pl.Y + 152, pl.Right - pbx - 30, 44));
+        }
+
+        void ShowRiskMenu(RiskLevel level, Point at)
+        {
+            var m = NewMenu();
+            RiskAction cur = settings.ActionFor(level);
+            foreach (RiskAction a in new[] { RiskAction.Protect, RiskAction.Warn, RiskAction.Ignore })
+            {
+                RiskAction act = a;
+                string text = a == RiskAction.Protect ? "Protect  (use the channel's action)" : a == RiskAction.Warn ? "Warn only  (never changes OBS)" : "Ignore  (let it play)";
+                Add(m, text, cur == a, () =>
+                {
+                    if (level == RiskLevel.Major) settings.RiskMajor = act; else if (level == RiskLevel.Independent) settings.RiskIndependent = act;
+                    else if (level == RiskLevel.Unknown) settings.RiskUnknown = act; else settings.RiskSafe = act;
+                    settings.Save(); engine.Reevaluate(); Invalidate();
+                    ShowToast(RiskInfo.LevelName(level) + ": " + ActionName(act));
+                });
+            }
+            m.Show(this, at);
+        }
+
+        void ShowImportMenu(Point at)
+        {
+            var m = NewMenu();
+            Add(m, "From a file…  (.txt or .csv, e.g. an Exportify playlist export)", false, () =>
+            {
+                using (var d = new OpenFileDialog { Filter = "Song lists (*.txt;*.csv)|*.txt;*.csv|All files|*.*", Title = "Import a stream-safe list" })
+                {
+                    if (d.ShowDialog(this) != DialogResult.OK) return;
+                    try { var l = settings.Lists.ImportFile(d.FileName); settings.Save(); engine.Reevaluate(); ShowToast("Imported " + l.Count + " entries from " + l.Name); }
+                    catch (Exception ex) { ShowToast("Couldn't import: " + ex.Message); }
+                }
+            });
+            Add(m, "From a URL…  (a list someone shares; refreshed on start)", false, () =>
+            {
+                string url = Microsoft.VisualBasic.Interaction.InputBox("Paste the address of a stream-safe list (plain text or CSV).\n\nOne entry per line: \"label: Name\", \"artist: Name\" or \"Artist - Title\".",
+                                                                          "Import a stream-safe list", "https://");
+                if (string.IsNullOrWhiteSpace(url) || url == "https://") return;
+                ShowToast("Downloading the list…");
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    string msg;
+                    try { var l = settings.Lists.ImportUrl(url.Trim()); settings.Save(); engine.Reevaluate(); msg = "Imported " + l.Count + " entries from " + l.Name; }
+                    catch (Exception ex) { msg = "Couldn't import: " + ex.Message; }
+                    try { BeginInvoke((Action)(() => ShowToast(msg))); } catch { }
+                });
+            });
+            m.Show(this, at);
+        }
+
+        void ShowScanAppMenu(Point at)
+        {
+            var m = NewMenu();
+            var apps = engine.Media.Select(x => x.App).Distinct().ToList();
+            if (apps.Count == 0) { ShowToast("Open your music player first"); return; }
+            foreach (string a in apps) { string k = a; Add(m, AppKey.Pretty(a), a == scanApp, () => { scanApp = k; Invalidate(); }); }
+            m.Show(this, at);
+        }
+
+        void StartOrStopScan()
+        {
+            if (scanner.Running) { scanner.Stop(); return; }
+            if (scanApp == null) { ShowToast("Open your music player and start the playlist first"); return; }
+            if (MessageBox.Show(this, "SongSentry will press \"next\" in " + AppKey.Pretty(scanApp) + " every couple of seconds and mark each song as safe, " +
+                                      "until the playlist starts over.\n\nStart your stream-safe playlist first, and mute the player if you like. " +
+                                      "Only scan playlists you know are safe to play on stream.", "Scan a playlist",
+                                MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
+            engine.ScanningApp = scanApp;
+            scanner.Start(scanApp);
+            Invalidate();
+        }
+
+        void AllowPearQueue()
+        {
+            if (pearBusy) return;
+            pearBusy = true; pearStatus = "Asking Pear Desktop… if Pear shows a message, click Allow."; Invalidate();
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string msg;
+                try
+                {
+                    string token = settings.PearToken;
+                    var songs = PearDesktop.Queue(settings.PearPort, ref token);
+                    settings.PearToken = token;
+                    foreach (var s in songs) engine.AddAllow("track:" + s);
+                    settings.Save();
+                    msg = songs.Count == 0 ? "Pear's queue is empty. Start the playlist in Pear first." : "Marked " + songs.Count + " songs from your Pear queue as safe.";
+                }
+                catch (Exception ex) { msg = ex.Message; }
+                try { BeginInvoke((Action)(() => { pearBusy = false; pearStatus = msg; ShowToast(msg); Invalidate(); })); } catch { }
+            });
+        }
+
         void Radio(Graphics g, string id, bool on, float x, float y)
         {
             bool hot = hover == id;
@@ -1122,6 +1323,14 @@ namespace SongSentry
             else if (id == "restore:quiet") { settings.Restore = RestoreMode.AfterQuiet; settings.Save(); engine.Reevaluate(); }
             else if (id == "restore:end") { settings.Restore = RestoreMode.TrackEnd; settings.Save(); engine.Reevaluate(); }
             else if (id == "opt:listen") { settings.ListenToAudio = !settings.ListenToAudio; settings.Save(); UpdateAnim(); ShowToast(settings.ListenToAudio ? "Listening to your sources' audio" : "Audio recognition off (Now Playing only)"); }
+            else if (id.StartsWith("risk:")) ShowRiskMenu((RiskLevel)Enum.Parse(typeof(RiskLevel), arg), e.Location);
+            else if (id.StartsWith("list:")) { if (settings.Lists.Enabled.Contains(arg)) settings.Lists.Enabled.Remove(arg); else settings.Lists.Enabled.Add(arg); settings.Save(); engine.Reevaluate(); }
+            else if (id.StartsWith("listdel:")) { settings.Lists.Remove(arg); settings.Save(); engine.Reevaluate(); ShowToast("List removed"); }
+            else if (id == "list:import") ShowImportMenu(e.Location);
+            else if (id.StartsWith("safeapp:")) { bool on = settings.IsSafeApp(arg); if (on) engine.RemoveAllow(settings.AllowList().First(x => x.Equals("app:" + arg, StringComparison.OrdinalIgnoreCase))); else engine.AddAllow("app:" + arg); ShowToast(on ? AppKey.Pretty(arg) + " is checked normally again" : "All music from " + AppKey.Pretty(arg) + " counts as safe"); }
+            else if (id == "scan:app") ShowScanAppMenu(e.Location);
+            else if (id == "scan:go") StartOrStopScan();
+            else if (id == "pear:go") AllowPearQueue();
             else if (id == "opt:acoustid") { settings.UseAcoustId = !settings.UseAcoustId; settings.Save(); UpdateAnim(); ShowToast(settings.UseAcoustId ? "AcoustID on (free)" : "AcoustID off"); }
             else if (id == "mem:clear")
             {
@@ -1152,7 +1361,8 @@ namespace SongSentry
             else if (e.Control && e.KeyCode == Keys.D1) CurrentPage = Page.Live;
             else if (e.Control && e.KeyCode == Keys.D2) CurrentPage = Page.Channels;
             else if (e.Control && e.KeyCode == Keys.D3) CurrentPage = Page.Recognition;
-            else if (e.Control && e.KeyCode == Keys.D4) CurrentPage = Page.Settings;
+            else if (e.Control && e.KeyCode == Keys.D4) CurrentPage = Page.SafeMusic;
+            else if (e.Control && e.KeyCode == Keys.D5) CurrentPage = Page.Settings;
         }
 
         // ================================================================== actions

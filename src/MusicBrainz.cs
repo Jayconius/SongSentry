@@ -86,6 +86,26 @@ namespace SongSentry
             return res;
         }
 
+        /// Every good match (score >= 90, same title) - MusicBrainz keeps one "recording" per version of a song
+        /// (original, remaster, live, bootleg...), and label info is spread over them. Blocking; call from a worker.
+        public static List<string> Recordings(string artist, string title, int max)
+        {
+            var ids = new List<string>();
+            string q = "recording:\"" + Esc(title) + "\"" + (string.IsNullOrWhiteSpace(artist) ? "" : " AND artist:\"" + Esc(artist) + "\"");
+            var d = Json.Read(Get("https://musicbrainz.org/ws/2/recording?fmt=json&limit=50&query=" + Uri.EscapeDataString(q)));
+            string want = TextNorm.Norm(title);
+            // The original studio recording is on by far the most official releases; bootlegs/live versions on few.
+            var ranked = new List<KeyValuePair<string, int>>();
+            foreach (var r in Json.Objs(d.ContainsKey("recordings") ? d["recordings"] : null))
+            {
+                if (Json.Num(r, "score", 0) < 90 || TextNorm.Norm(Json.Str(r, "title")) != want) continue;
+                int official = Json.Objs(r.ContainsKey("releases") ? r["releases"] : null).Count(x => Json.Str(x, "status") == "Official");
+                ranked.Add(new KeyValuePair<string, int>(Json.Str(r, "id"), official));
+            }
+            ids.AddRange(ranked.OrderByDescending(x => x.Value).Take(max).Select(x => x.Key));
+            return ids;
+        }
+
         static string Esc(string s)
         {
             var sb = new StringBuilder();
@@ -97,7 +117,8 @@ namespace SongSentry
             return sb.ToString();
         }
 
-        static string Get(string url)
+        /// Rate-limited GET (1 request/s as MusicBrainz asks), with SongSentry's User-Agent.
+        public static string Get(string url)
         {
             lock (rate)
             {
@@ -105,12 +126,26 @@ namespace SongSentry
                 if (wait > 0) Thread.Sleep((int)wait);
                 last = DateTime.UtcNow;
             }
-            using (var wc = new WebClient())
+            for (int attempt = 0; ; attempt++)
             {
-                wc.Encoding = Encoding.UTF8;
-                wc.Headers[HttpRequestHeader.UserAgent] = UserAgent;
-                wc.Headers[HttpRequestHeader.Accept] = "application/json";
-                return wc.DownloadString(url);
+                try
+                {
+                    using (var wc = new WebClient())
+                    {
+                        wc.Encoding = Encoding.UTF8;
+                        wc.Headers[HttpRequestHeader.UserAgent] = UserAgent;
+                        wc.Headers[HttpRequestHeader.Accept] = "application/json";
+                        return wc.DownloadString(url);
+                    }
+                }
+                catch (WebException e)
+                {
+                    // 503 = MusicBrainz is rate-limiting or busy: wait and try again (twice)
+                    var r = e.Response as HttpWebResponse;
+                    if (attempt >= 2 || r == null || (int)r.StatusCode != 503) throw;
+                    Thread.Sleep(2000 * (attempt + 1));
+                    lock (rate) last = DateTime.UtcNow;
+                }
             }
         }
     }

@@ -11,10 +11,10 @@ $wm = Join-Path $env:WINDIR 'System32\WinMetadata'
 # Now Playing uses the WinRT metadata that ships with Windows. Deliberately NOT System.Runtime.WindowsRuntime.dll:
 # its AsTask() needs the union Windows.winmd, which Windows doesn't ship.
 $refs = '/codepage:65001', '/nologo', '/r:System.dll', '/r:System.Core.dll', '/r:System.Drawing.dll', '/r:System.Windows.Forms.dll',
-        '/r:System.Web.Extensions.dll', '/r:System.Security.dll', '/unsafe',
+        '/r:System.Web.Extensions.dll', '/r:System.Security.dll', '/r:Microsoft.VisualBasic.dll', '/unsafe',
         "/r:$wm\Windows.Media.winmd", "/r:$wm\Windows.Foundation.winmd",
         "/r:$fw\System.Runtime.dll", "/r:$fw\System.Runtime.InteropServices.WindowsRuntime.dll", "/r:$fw\System.Threading.Tasks.dll"
-$core = 'Util', 'Settings', 'Obs', 'NowPlaying', 'MusicBrainz', 'Engine', 'AudioDevices', 'Landmark', 'SongLibrary', 'Capture', 'MusicDetect', 'AudD', 'AudioTag', 'AcoustId', 'Recognizer' | ForEach-Object { "$root\src\$_.cs" }
+$core = 'Util', 'Settings', 'Obs', 'NowPlaying', 'MusicBrainz', 'Engine', 'AudioDevices', 'Landmark', 'SongLibrary', 'Capture', 'MusicDetect', 'AudD', 'AudioTag', 'AcoustId', 'Risk', 'SafeLists', 'Playlists', 'Recognizer' | ForEach-Object { "$root\src\$_.cs" }
 $ui = 'Theme', 'MainForm', 'Program' | ForEach-Object { "$root\src\$_.cs" }
 
 New-Item -ItemType Directory -Force "$root\build", "$root\dist" | Out-Null

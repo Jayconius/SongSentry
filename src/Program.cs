@@ -60,6 +60,8 @@ namespace SongSentry
                 nowPlaying.Changed += engine.OnMedia;
                 engine.Skipper = nowPlaying.SkipNext;
 
+                engine.Risks.Load();
+                ThreadPool.QueueUserWorkItem(_ => settings.Lists.RefreshUrls());   // imported stream-safe lists from URLs
                 var library = new SongLibrary();
                 library.Load();
                 var recognizer = new Recognizer(settings, engine, library);

@@ -41,6 +41,7 @@ namespace SongSentry
 
     public sealed class ChannelView
     {
+        public RiskInfo Risk;   // label-based risk of the current song (null = not checked yet)
         public string Input;
         public ChannelStatus Status;
         public string Detail;
@@ -65,7 +66,8 @@ namespace SongSentry
         public string SongKey, OverriddenKey;
         public MediaInfo Media;
         public DateTime? ClearSince;
-        public SongHit Audio; public DateTime AudioAt;   // latest song recognised in this source's own audio
+        public SongHit Audio; public DateTime AudioAt;
+        public RiskInfo Risk;   // latest song recognised in this source's own audio
         public ChannelStatus Status = ChannelStatus.Idle;
         public string Detail;
     }
@@ -93,6 +95,10 @@ namespace SongSentry
         public event Action<string, string, bool> Notify; // title, text, alert -> tray balloon
         public Func<string, string, SongMatch> SongLookup = MusicBrainz.Lookup;   // replaceable in tests
         public Func<string, bool> Skipper;                // "next track" on a media session (by AUMID); set by Program
+        public RiskCache Risks = new RiskCache();          // label risk per song (Program loads the saved one)
+        public Func<string, string, RiskInfo> RiskLookup;  // MusicBrainz label check; replaceable in tests
+        readonly HashSet<string> riskPending = new HashSet<string>();
+        public volatile string ScanningApp;               // a playlist scan is running in this app: never act on it
         readonly List<DateTime> skips = new List<DateTime>();
         bool skipPaused;                                  // too many skips in a row: stop until a safe song plays
         const int MaxSkipsInARow = 5;
@@ -154,7 +160,7 @@ namespace SongSentry
             var chs = settings.ChannelList().Select(c =>
             {
                 Run r = RunOf(c.Input);
-                return new ChannelView { Input = c.Input, Status = c.Enabled ? r.Status : ChannelStatus.Off, Detail = r.Detail, Media = r.Media == null ? null : r.Media.Clone() };
+                return new ChannelView { Input = c.Input, Status = c.Enabled ? r.Status : ChannelStatus.Off, Detail = r.Detail, Media = r.Media == null ? null : r.Media.Clone(), Risk = r.Risk };
             }).ToList();
             lock (snap)
             {
@@ -566,12 +572,26 @@ namespace SongSentry
                     if (bad) { risky = true; break; }
                 }
                 // Songs recognised in the source's own audio (song memory / online services).
+                string heardLabel = null;
                 if (!risky && r.Audio != null && (now - r.AudioAt).TotalSeconds <= AudioHold)
                 {
                     var am = AsMedia(r.Audio);
-                    bool ok = r.Audio.Song.Safe || settings.IsAllowed(r.Audio.Song.Artist, r.Audio.Song.Title, r.Audio.Song.Label);
-                    if (!ok) { m = am; reason = "song"; risky = true; }
+                    var sg = r.Audio.Song;
+                    bool ok = sg.Safe || settings.IsAllowed(sg.Artist, sg.Title, sg.Label) || OnSafeList(sg.Artist, sg.Title, sg.Label)
+                              || (inf != null && inf.Kind == "wasapi_process_output_capture" && settings.IsSafeApp(inf.App));
+                    if (!ok) { m = am; reason = "song"; risky = true; heardLabel = sg.Label; }
                     else if (m == null) { m = am; reason = "allowed"; }
+                }
+                // Who released it? Major / independent / unknown / stream-safe -> the action the streamer chose for that level.
+                ActionKind act = c.Action;
+                r.Risk = null;
+                if (risky)
+                {
+                    r.Risk = RiskOf(m, heardLabel);
+                    RiskLevel lv = r.Risk != null ? r.Risk.Level : RiskLevel.Unknown;
+                    RiskAction ra = settings.ActionFor(lv);
+                    if (ra == RiskAction.Ignore) { risky = false; reason = lv == RiskLevel.Safe ? "safe list" : "ignored"; }
+                    else if (ra == RiskAction.Warn) act = ActionKind.Warn;
                 }
                 r.Media = m;
 
@@ -585,15 +605,16 @@ namespace SongSentry
                         continue;
                     }
                     r.OverriddenKey = null;
-                    if (!r.Active) { Apply(c, r, inf, m); TrySkip(c, m); }
+                    if (r.Active && r.Applied != act) Restore(c, r, "risk level checked");   // e.g. the label turned out to be "warn only"
+                    if (!r.Active) { Apply(c, r, inf, m, act); TrySkip(c, m, act); }
                     else if (r.SongKey != key)
                     {
                         r.SongKey = key;
                         AddEvent(c.Input, "Next song, still protected", m, true);
-                        TrySkip(c, m);
+                        TrySkip(c, m, act);
                     }
-                    r.Status = c.Action == ActionKind.Warn ? ChannelStatus.Warning : ChannelStatus.Protecting;
-                    r.Detail = Channel.ActionLabel(c.Action, c.DuckPercent);
+                    r.Status = act == ActionKind.Warn ? ChannelStatus.Warning : ChannelStatus.Protecting;
+                    r.Detail = Channel.ActionLabel(act, c.DuckPercent) + "  ·  " + RiskText(r.Risk);
                 }
                 else
                 {
@@ -609,8 +630,8 @@ namespace SongSentry
                     {
                         r.ClearSince = null;
                         r.Media = held;
-                        r.Status = c.Action == ActionKind.Warn ? ChannelStatus.Warning : ChannelStatus.Protecting;
-                        r.Detail = Channel.ActionLabel(c.Action, c.DuckPercent) + " (paused, held until the track is over)";
+                        r.Status = r.Applied == ActionKind.Warn ? ChannelStatus.Warning : ChannelStatus.Protecting;
+                        r.Detail = Channel.ActionLabel(r.Applied, c.DuckPercent) + " (paused, held until the track is over)";
                         continue;
                     }
                     if (r.Active)
@@ -624,9 +645,10 @@ namespace SongSentry
                         r.SongKey = null;
                         if (m == null && r.OverriddenKey != null) r.OverriddenKey = null;   // song ended: re-arm
                     }
-                    r.Status = reason == "allowed" ? ChannelStatus.Allowed : reason == "checking" ? ChannelStatus.Checking
-                             : m != null ? ChannelStatus.Listening : ChannelStatus.Idle;
-                    r.Detail = reason == "allowed" ? "On your allow list" : reason == "checking" ? "Checking the song on MusicBrainz…"
+                    r.Status = reason == "allowed" || reason == "safe list" || reason == "ignored" ? ChannelStatus.Allowed
+                             : reason == "checking" ? ChannelStatus.Checking : m != null ? ChannelStatus.Listening : ChannelStatus.Idle;
+                    r.Detail = reason == "allowed" ? "On your allow list" : reason == "safe list" ? "Stream-safe: " + RiskText(r.Risk)
+                             : reason == "ignored" ? "Ignored: " + RiskText(r.Risk) : reason == "checking" ? "Checking the song on MusicBrainz…"
                              : reason == "not a song" ? "Not a known song" : m != null ? "Playing" : "Nothing playing";
                     if (r.Active) r.Detail = "Restoring shortly…";
                 }
@@ -638,7 +660,8 @@ namespace SongSentry
         {
             reason = "idle";
             if (m == null || c.Apps.Count == 0) return false;
-            if (settings.IsAllowed(m.Artist, m.Title)) { reason = "allowed"; return false; }
+            if (settings.IsAllowed(m.Artist, m.Title) || settings.IsSafeApp(m.App) || m.App == ScanningApp) { reason = "allowed"; return false; }
+            if (OnSafeList(m.Artist, m.Title, null)) { reason = "safe list"; return false; }
             if (c.Mode == DetectMode.AnyMedia && !AppKey.IsBrowser(m.App)) { reason = "media"; return true; }
 
             // Browsers / "known songs only": confirm the title with MusicBrainz first.
@@ -655,6 +678,48 @@ namespace SongSentry
             StartLookup(m);
             reason = "checking";
             return false;
+        }
+
+        bool OnSafeList(string artist, string title, string label)
+        {
+            var l = settings.Lists;
+            return l.MatchTrack(artist, title) != null || l.MatchArtist(artist) != null || (label != null && l.MatchLabel(label) != null);
+        }
+
+        public static string RiskText(RiskInfo r)
+        {
+            if (r == null) return "checking the label…";
+            return RiskInfo.LevelName(r.Level) + (string.IsNullOrEmpty(r.Label) || r.Label == "[no label]" ? "" : " (" + r.Label + ")");
+        }
+
+        /// Cached risk for a song, or null while it is being checked (the lookup then runs in the background).
+        RiskInfo RiskOf(MediaInfo m, string knownLabel)
+        {
+            if (m == null) return null;
+            string artist = m.Artist, title = m.Title;
+            if (AppKey.IsBrowser(m.App)) MusicBrainz.Parse(m.Title, m.Artist, out artist, out title);
+            string key = TextNorm.Norm(artist) + "|" + TextNorm.Norm(title);
+            var hit = Risks.Get(key);
+            if (hit != null && !(hit.Failed && (DateTime.UtcNow - hit.Checked).TotalMinutes >= 5)) return hit;   // failed checks retry after 5 min
+            if (!string.IsNullOrWhiteSpace(knownLabel)) { var fl = RiskRater.FromLabel(knownLabel, settings.Lists); Risks.Put(key, fl); return fl; }
+            if (!riskPending.Add(key)) return null;
+            var lookup = RiskLookup ?? ((a, t) => RiskRater.Lookup(a, t, settings.Lists));
+            Action work = () =>
+            {
+                RiskInfo res;
+                try { res = lookup(artist, title); }
+                catch (Exception e) { res = new RiskInfo { Level = RiskLevel.Unknown, Reason = "lookup failed: " + e.Message, Checked = DateTime.UtcNow, Failed = true }; }
+                Post(() =>
+                {
+                    riskPending.Remove(key);
+                    Risks.Put(key, res);
+                    Log.Write("risk " + artist + " - " + title + ": " + RiskInfo.LevelName(res.Level) + " (" + res.Reason + (res.Label != null ? ", " + res.Label : "") + ")");
+                    Evaluate();
+                });
+            };
+            if (Synchronous) work(); else ThreadPool.QueueUserWorkItem(_ => work());
+            var fresh = Risks.Get(key);
+            return fresh != null && fresh != hit ? fresh : hit;   // new answer if there is one yet, else the old (failed = unknown) one
         }
 
         void StartLookup(MediaInfo m)
@@ -674,9 +739,9 @@ namespace SongSentry
 
         /// Auto-skip: ask the player for the next track. Stops after MaxSkipsInARow within a minute (a fully licensed
         /// playlist would otherwise be skipped forever) until a safe song plays.
-        void TrySkip(Channel c, MediaInfo m)
+        void TrySkip(Channel c, MediaInfo m, ActionKind act)
         {
-            if (!settings.AutoSkip || c.Action == ActionKind.Warn || Skipper == null || m == null || m.Aumid == null || skipPaused) return;
+            if (!settings.AutoSkip || act == ActionKind.Warn || Skipper == null || m == null || m.Aumid == null || skipPaused) return;
             DateTime now = clock();
             skips.RemoveAll(t => (now - t).TotalSeconds > 60);
             if (skips.Count >= MaxSkipsInARow)
@@ -696,14 +761,14 @@ namespace SongSentry
             if (Synchronous) work(); else ThreadPool.QueueUserWorkItem(_ => work());
         }
 
-        void Apply(Channel c, Run r, InputInfo i, MediaInfo m)
+        void Apply(Channel c, Run r, InputInfo i, MediaInfo m, ActionKind act)
         {
-            r.Active = true; r.Applied = c.Action; r.SongKey = SongKey(m); r.ClearSince = null;
+            r.Active = true; r.Applied = act; r.SongKey = SongKey(m); r.ClearSince = null;
             r.TouchMute = r.TouchVolume = r.TouchTracks = false;
             r.OrigMuted = i.Muted; r.OrigVolume = i.VolumeMul; r.OrigTracks = new Dictionary<string, bool>(i.Tracks);
             try
             {
-                switch (c.Action)
+                switch (act)
                 {
                     case ActionKind.Mute:
                         if (!i.Muted)
@@ -742,14 +807,14 @@ namespace SongSentry
                 AddEvent(c.Input, "Couldn't change the source in OBS: " + e.Message, m, true);
             }
             bool changed = r.TouchMute || r.TouchVolume || r.TouchTracks;
-            if (!changed && c.Action != ActionKind.Warn)
+            if (!changed && act != ActionKind.Warn)
                 AddEvent(c.Input, "Already silent on stream, nothing to change", m, false);
             else
             {
-                string what = c.Action == ActionKind.Warn ? "Licensed music playing (warning only)" : Channel.ActionLabel(c.Action, c.DuckPercent);
+                string what = (act == ActionKind.Warn ? "Licensed music playing (warning only)" : Channel.ActionLabel(act, c.DuckPercent)) + "  ·  " + RiskText(r.Risk);
                 AddEvent(c.Input, what, m, true);
                 var h = Notify;
-                if (h != null) h(c.Input + ": " + (c.Action == ActionKind.Warn ? "licensed music" : Short(what)), SongText(m), c.Action == ActionKind.Warn);
+                if (h != null) h(c.Input + ": " + (act == ActionKind.Warn ? "licensed music" : Short(Channel.ActionLabel(act, c.DuckPercent))), SongText(m) + "  ·  " + RiskText(r.Risk), act == ActionKind.Warn);
             }
             WriteJournal();
         }

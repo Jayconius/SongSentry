@@ -29,7 +29,10 @@ namespace SongSentry
             fake.Add("BRB loop", "ffmpeg_source", false, 1, true, true, true, true, true, true);
             fake.Window = "Spotify:Chrome_WidgetWin_1:Spotify.exe";
 
-            var settings = new Settings { Restore = RestoreMode.TrackEnd, AutoSkip = true };
+            var settings = new Settings { Restore = RestoreMode.TrackEnd, AutoSkip = true, RiskIndependent = RiskAction.Warn };
+            settings.Lists.FromJson(null);
+            settings.Lists.Enabled.Add("epidemic");
+            settings.Allow.Add("app:pretzel");
             settings.Channels.Add(new Channel { Input = "Music", Enabled = true, App = "spotify", Action = ActionKind.StreamOnly });
             settings.Channels.Add(new Channel { Input = "Game Audio", Enabled = true, Action = ActionKind.StreamOnly });
             settings.Channels.Add(new Channel { Input = "Browser", Enabled = true, App = "brave", Action = ActionKind.Duck, DuckPercent = 20, Mode = DetectMode.KnownSongs });
@@ -55,6 +58,8 @@ namespace SongSentry
 
             var engine = new Engine(settings, fake, null) { Synchronous = true };
             engine.SongLookup = (ar, ti) => new SongMatch { Found = false };
+            engine.RiskLookup = (ar, ti) => ti == "Neon Skyline" ? new RiskInfo { Level = RiskLevel.Major, Label = "Night Drive Records", Owner = "Sony Music" }
+                                          : new RiskInfo { Level = RiskLevel.Independent, Label = "Sunwave Music" };
             engine.OnObsState(true);
             engine.OnMedia(new List<MediaInfo>
             {
@@ -67,7 +72,7 @@ namespace SongSentry
             var obs = new ObsConnection();
             obs.SetPreviewState(ObsState.Connected, "5.7.4");
             var form = new MainForm(settings, engine, obs, new NowPlayingWatcher(), new Recognizer(settings, engine, lib));
-            foreach (Page p in new[] { Page.Live, Page.Channels, Page.Recognition, Page.Settings })
+            foreach (Page p in new[] { Page.Live, Page.Channels, Page.Recognition, Page.SafeMusic, Page.Settings })
             {
                 form.CurrentPage = p;
                 using (var bmp = new Bitmap((int)MainForm.W * 2, (int)MainForm.H * 2))

@@ -26,6 +26,40 @@ namespace SongSentry
         }
     }
 
+    static class SongMatchText
+    {
+        static readonly System.Text.RegularExpressions.Regex brackets = new System.Text.RegularExpressions.Regex(@"\s*[\(\[][^\)\]]*[\)\]]");
+        static readonly System.Text.RegularExpressions.Regex feat = new System.Text.RegularExpressions.Regex(@"\s+(feat\.?|ft\.?|featuring|with)\s+.*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        /// Title without "(feat. X)", "[Radio Edit]", " - Remastered 2011" etc., so the same song matches across
+        /// players and playlists (Pear's queue vs Windows' Now Playing, Spotify exports...).
+        public static string Title(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return "";
+            string s = brackets.Replace(t, "");
+            int d = s.IndexOf(" - ", StringComparison.Ordinal);
+            if (d > 0) s = s.Substring(0, d);
+            s = feat.Replace(s, "");
+            return TextNorm.Norm(s);
+        }
+
+        /// First credited artist ("David Guetta & Bebe Rexha" -> "david guetta").
+        public static string FirstArtist(string a)
+        {
+            if (string.IsNullOrEmpty(a)) return "";
+            string s = a.Split(new[] { ",", "&", " x ", " X ", " feat", " ft.", " with ", ";" }, StringSplitOptions.RemoveEmptyEntries)[0];
+            return TextNorm.Norm(s);
+        }
+
+        /// Same song? Title compared loosely, artist fully or by first credited artist.
+        public static bool Same(string artistA, string titleA, string artistB, string titleB)
+        {
+            if (Title(titleA) != Title(titleB) || Title(titleA).Length == 0) return false;
+            if (string.IsNullOrWhiteSpace(artistA) || string.IsNullOrWhiteSpace(artistB)) return true;   // "Title" only entries
+            return TextNorm.Norm(artistA) == TextNorm.Norm(artistB) || FirstArtist(artistA) == FirstArtist(artistB);
+        }
+    }
+
     static class Paths
     {
         public static string Data = Path.Combine(   // LogicTest points this at a temp folder
@@ -157,6 +191,8 @@ namespace SongSentry
                 case "tidal": return "TIDAL";
                 case "applemusic": return "Apple Music";
                 case "deezer": return "Deezer";
+                case "youtube music": return "YouTube Music";
+                case "pretzel": return "Pretzel";
                 case "amazon music": return "Amazon Music";
                 case "": return "Nothing";
             }

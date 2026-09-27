@@ -25,6 +25,7 @@ namespace SongSentry
         {
             if (!keepJournal && File.Exists(Paths.File("restore.json"))) File.Delete(Paths.File("restore.json"));
             var e = new Engine(s, obs, () => now) { Synchronous = true };
+            e.RiskLookup = (a, t) => new RiskInfo { Level = RiskLevel.Major, Label = "Test Records", Reason = "test" };   // no network in tests
             e.OnObsState(true);
             return e;
         }
@@ -355,6 +356,118 @@ namespace SongSentry
                 var a1 = lib.GetOrAdd("Taylor Swift", "I Knew You Were Trouble", null, null, "AudioTag", false);
                 var a2 = lib.GetOrAdd("Taylor Swift", "I Knew You Were Trouble.", null, null, "AcoustID", false);
                 Check(a1 == a2 && lib.Count == 1, "one song in the memory, not two");
+            });
+
+            Test("Label risk: majors recognised by name, indies not", () =>
+            {
+                Check(RiskRater.MajorOf("Republic Records") == "Universal Music Group", "Republic -> UMG");
+                Check(RiskRater.MajorOf("Big Machine Records, LLC") == "Universal Music Group", "Big Machine -> UMG");
+                Check(RiskRater.MajorOf("RCA Records Label") == "Sony Music", "RCA -> Sony");
+                Check(RiskRater.MajorOf("Atlantic Records") == "Warner Music Group", "Atlantic -> Warner");
+                Check(RiskRater.MajorOf("Epic Sound Studio") == null, "'Epic Sound' is not Epic Records");
+                Check(RiskRater.MajorOf("Arcade Music") == null, "'Arcade' does not contain the word RCA");
+                Check(RiskRater.MajorOf("Monstercat") == null && RiskRater.MajorOf("NCS") == null, "stream-safe labels are not majors");
+                var lists = new SafeLists(); lists.FromJson(null);
+                Check(RiskRater.FromLabel("NoCopyrightSounds", lists).Level == RiskLevel.Safe, "NCS is safe (free list on by default)");
+                Check(RiskRater.FromLabel("Monstercat Uncaged", lists).Level == RiskLevel.Independent, "paid list off by default");
+                lists.Enabled.Add("monstercat");
+                Check(RiskRater.FromLabel("Monstercat Uncaged", lists).Level == RiskLevel.Safe, "paid list switched on");
+            });
+
+            Test("Stream-safe list import: text lines and Exportify-style CSV", () =>
+            {
+                var t = SafeLists.Parse("# my safe list\nlabel: Chillhop Music\nartist: Kupla\nSylver - Lay All Your Love On Me\nLakey Inspired", "mine");
+                Check(t.Labels.Count == 1 && t.Artists.Count == 2 && t.Tracks.Count == 1, "text: " + t.Labels.Count + "/" + t.Artists.Count + "/" + t.Tracks.Count);
+                var c = SafeLists.Parse("\"Track URI\",\"Track Name\",\"Artist Name(s)\",\"Album Name\"\n\"spotify:track:1\",\"Chill Day\",\"Lakey Inspired, Someone\",\"A\"\n\"spotify:track:2\",\"Say \"\"Hi\"\"\",\"Kupla\",\"B\"", "csv");
+                Check(c.Tracks.Count == 2 && c.Tracks[0] == "Lakey Inspired - Chill Day" && c.Tracks[1] == "Kupla - Say \"Hi\"", "csv: " + string.Join(" | ", c.Tracks));
+                var lists = new SafeLists(); lists.Imported.Add(c); lists.Enabled.Add(c.Id);
+                Check(lists.MatchTrack("Lakey Inspired", "Chill Day!") != null, "imported track matches");
+            });
+
+            Test("Pear Desktop queue parsing", () =>
+            {
+                string json = "{\"items\":[{\"playlistPanelVideoRenderer\":{\"title\":{\"runs\":[{\"text\":\"Blinding Lights\"}]},\"shortBylineText\":{\"runs\":[{\"text\":\"The Weeknd\"}]}}}," +
+                              "{\"playlistPanelVideoWrapperRenderer\":{\"primaryRenderer\":{\"playlistPanelVideoRenderer\":{\"title\":{\"runs\":[{\"text\":\"Chill Day\"}]},\"longBylineText\":{\"runs\":[{\"text\":\"Lakey Inspired\"},{\"text\":\" \u2022 \"},{\"text\":\"Album\"}]}}}}}]}";
+                var q = PearDesktop.ParseQueue(json);
+                Check(q.Count == 2 && q[0] == "The Weeknd - Blinding Lights" && q[1] == "Lakey Inspired - Chill Day", string.Join(" | ", q));
+            });
+
+            Test("Playlist scan: marks every song safe, stops when the playlist loops", () =>
+            {
+                var songs = new[] { "A", "B", "C", "D", "E" };
+                int idx = 0; var allowed = new List<string>();
+                var sc = new PlaylistScanner(
+                    () => new List<MediaInfo> { new MediaInfo { Aumid = "Spotify.exe", App = "spotify", Artist = "Artist", Title = songs[idx % songs.Length], State = PlayState.Playing } },
+                    aumid => { idx++; return true; },
+                    e2 => allowed.Add(e2)) { StepMs = 0, WaitMs = 500 };
+                sc.Run("spotify");
+                Check(allowed.Count == 5 && allowed[0] == "track:Artist - A" && allowed[4] == "track:Artist - E", string.Join(" | ", allowed));
+                Check(sc.Status.Contains("looped"), sc.Status);
+            });
+
+            Test("Risk levels choose the action: major protects, indie can warn, ignored stays alone", () =>
+            {
+                var obs = new FakeObs(); obs.Add("Music", "x", false, 1, true);
+                var s = new Settings { RiskIndependent = RiskAction.Warn, RiskUnknown = RiskAction.Ignore };
+                s.Channels.Add(new Channel { Input = "Music", Enabled = true, App = "spotify", Action = ActionKind.Mute });
+                var e = Make(obs, s);
+                e.RiskLookup = (a, t) => new RiskInfo { Level = t == "Hit" ? RiskLevel.Major : t == "Indie" ? RiskLevel.Independent : RiskLevel.Unknown, Label = "L" };
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "Pop Star", "Hit", PlayState.Playing) });
+                Check(obs.Calls.SequenceEqual(new[] { "mute Music True" }), "major muted: " + string.Join("; ", obs.Calls));
+                Check(e.Channels[0].Risk != null && e.Channels[0].Risk.Level == RiskLevel.Major, "risk shown");
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "Band", "Indie", PlayState.Playing) });
+                Check(obs.Calls.Last() == "mute Music False" && e.Channels[0].Status == ChannelStatus.Warning, "indie -> warn only: " + string.Join("; ", obs.Calls) + " " + e.Channels[0].Status);
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "Nobody", "Obscure", PlayState.Playing) });
+                Advance(e, 3);
+                Check(e.Channels[0].Status == ChannelStatus.Allowed, "unknown -> ignored: " + e.Channels[0].Status);
+            });
+
+            Test("Stream-safe lists and safe apps skip the checks entirely", () =>
+            {
+                var obs = new FakeObs(); obs.Add("Music", "x", false, 1, true); obs.Add("Game", "x", false, 1, true);
+                var s = new Settings(); s.Lists.FromJson(null);   // free lists on
+                s.Allow.Add("app:pretzel");
+                s.Channels.Add(new Channel { Input = "Music", Enabled = true, Apps = new List<string> { "spotify", "pretzel" }, Action = ActionKind.Mute });
+                s.Channels.Add(new Channel { Input = "Game", Enabled = true, Action = ActionKind.Mute });
+                var e = Make(obs, s);
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "StreamBeats", "Lofi 3", PlayState.Playing), Song("pretzel", "Anyone", "Anything", PlayState.Playing) });
+                e.OnAudio("Game", new SongHit { Song = new SongInfo { Artist = "Some DJ", Title = "Drop", Label = "NCS", Source = "AudD" }, Votes = 40 });
+                Check(obs.Calls.Count == 0, "nothing muted: " + string.Join("; ", obs.Calls));
+            });
+
+            Test("Allow list matches across players: (feat. X), [Radio Edit], - Remastered, first artist", () =>
+            {
+                var s = new Settings();
+                s.Allow.Add("track:Joel Corry - Head & Heart (feat. MNEK)");
+                s.Allow.Add("track:Alex Gaudino - Destination Calabria [Radio Edit] (feat. Crystal Waters)");
+                s.Allow.Add("track:David Guetta & Bebe Rexha - I'm Good (Blue)");
+                s.Allow.Add("track:Queen - Bohemian Rhapsody - Remastered 2011");
+                Check(s.IsAllowed("Joel Corry", "Head & Heart"), "feat. in the list, not in Now Playing");
+                Check(s.IsAllowed("Alex Gaudino", "Destination Calabria"), "radio edit + feat");
+                Check(s.IsAllowed("David Guetta, Bebe Rexha", "I'm Good (Blue)"), "artist list punctuation");
+                Check(s.IsAllowed("David Guetta", "I'm Good (Blue)"), "first artist only");
+                Check(s.IsAllowed("Queen", "Bohemian Rhapsody"), "remaster suffix");
+                Check(!s.IsAllowed("Joel Corry", "Sorry"), "other song by the same artist is not allowed");
+                Check(!s.IsAllowed("Someone Else", "Head & Heart"), "same title by another artist is not allowed");
+            });
+
+            Test("A failed label check is not stored for good: retried after 5 minutes, never saved", () =>
+            {
+                var obs = new FakeObs(); obs.Add("Music", "x", false, 1, true);
+                var s = new Settings { RiskMajor = RiskAction.Warn };
+                s.Channels.Add(new Channel { Input = "Music", Enabled = true, App = "spotify", Action = ActionKind.Mute });
+                var e = Make(obs, s);
+                int calls = 0; bool online = false;
+                e.RiskLookup = (a, t) => { calls++; return online ? new RiskInfo { Level = RiskLevel.Major, Label = "Republic Records" } : new RiskInfo { Level = RiskLevel.Unknown, Failed = true, Checked = DateTime.UtcNow }; };
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "The Weeknd", "Blinding Lights", PlayState.Playing) });
+                Check(obs.Calls.SequenceEqual(new[] { "mute Music True" }), "unknown while failing -> protected: " + string.Join("; ", obs.Calls));
+                string saved = File.Exists(Paths.File("labels.json")) ? File.ReadAllText(Paths.File("labels.json")) : "";
+                Check(!saved.Contains("blinding lights"), "failed result not saved");
+                online = true;
+                e.Risks.Put("the weeknd|blinding lights", new RiskInfo { Level = RiskLevel.Unknown, Failed = true, Checked = DateTime.UtcNow.AddMinutes(-6) });
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "The Weeknd", "Blinding Lights", PlayState.Playing) });
+                Check(calls == 2 && e.Channels[0].Risk.Level == RiskLevel.Major, "retried after 5 min: " + calls + " " + e.Channels[0].Risk.Level);
+                Check(e.Channels[0].Status == ChannelStatus.Warning, "major -> warn (as configured): " + e.Channels[0].Status);
             });
 
             Test("Old settings files with a single app still load", () =>

@@ -11,6 +11,22 @@ IRL streamers, show hosts, podcasters and Just Chatting creators.
 
 ## New in 1.1.0
 
+### Safe music: knows what's risky, and what isn't
+- **Risk levels:** every recognized song is rated by who released it, using MusicBrainz labels and their owners
+  (e.g. *Republic Records → Universal*): **major label**, **independent**, **unknown**, or **stream-safe**
+  (Creative Commons or on a stream-safe list). You choose protect / warn only / ignore per level. The label is
+  checked once per song and cached; until then the song is protected.
+- **Stream-safe lists:** built-in free lists (StreamBeats, NoCopyrightSounds, FiXT, on by default), switches for paid
+  libraries you have a license for (Epidemic Sound, Monstercat, Artlist, Soundstripe, Pretzel), and **import** your
+  own list from a file or URL (plain text or CSV, e.g. a Spotify playlist exported with Exportify).
+- **Whitelist whole playlists:** *Scan a playlist* skips through a playlist in any player (Spotify, YouTube Music,
+  browsers) and marks every song safe, about 2 s per song, stopping when it loops. **Pear Desktop** (YouTube Music)
+  queues are imported in one click through Pear's API Server plugin.
+- **Safe apps:** everything a chosen app plays (e.g. Pretzel) counts as safe.
+- Songs match across players even with "(feat. X)", "[Radio Edit]" or "- Remastered" in the title.
+
+### Recognition
+
 - **AcoustID built in (free, no key needed).** When SongSentry hears music start after silence, it sends a
   fingerprint of the first ~18 s to AcoustID. In testing on a real OBS setup it named the song in 0.6 s and muted
   it on stream about 21 s after the song started. The next time that song played, the song memory recognized it in

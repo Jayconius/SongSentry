@@ -51,8 +51,10 @@ If it goes through OBS, SongSentry can guard it.
 | Live | Channels |
 |---|---|
 | <img src="docs/screen-live.png" alt="Live page: protecting your stream" width="100%"> | <img src="docs/screen-channels.png" alt="Channels page: pick the OBS sources to protect" width="100%"> |
-| **Recognition** | **Settings** |
-| <img src="docs/screen-recognition.png" alt="Recognition page: song memory and optional keys" width="100%"> | <img src="docs/screen-settings.png" alt="Settings page" width="100%"> |
+| **Recognition** | **Safe music** |
+| <img src="docs/screen-recognition.png" alt="Recognition page: song memory and online fallbacks" width="100%"> | <img src="docs/screen-safemusic.png" alt="Safe music page: risk levels, stream-safe lists, playlists, safe apps" width="100%"> |
+| **Settings** | |
+| <img src="docs/screen-settings.png" alt="Settings page" width="100%"> | |
 
 <sub>Screenshots use made-up sources and songs.</sub>
 
@@ -73,7 +75,11 @@ If it goes through OBS, SongSentry can guard it.
 4. **Learning.** Every song it identifies (from Now Playing or any of the services above) is learned at its real
    position in the song while it plays. Next time it's recognized offline in
    about 5 seconds, from any point in the song, even when the game is louder than the music.
-5. **Acting in OBS** (via the built-in obs-websocket): **mute on stream only** (removes the source from your stream
+5. **Deciding if it's risky.** Every recognized song is checked against your allow list, **safe apps** and
+   **stream-safe lists**, then rated by **who released it** (MusicBrainz label and owner): *major label* (Universal,
+   Sony, Warner), *independent*, *unknown*, or *stream-safe* (Creative Commons / stream-safe list). You choose what
+   each level does: protect, warn only, or ignore.
+6. **Acting in OBS** (via the built-in obs-websocket): **mute on stream only** (removes the source from your stream
    and Twitch VOD tracks and keeps it in your recording), **mute everywhere**, **turn down**, or **warn only**. It
    restores the original state afterwards, never unmutes something *you* muted, and backs off if you change a source
    by hand.
@@ -106,6 +112,14 @@ before, and why it gets better the more you stream.
 - 🔇 **Actions:** mute on stream only · mute everywhere · turn down to 5–50 % · warn only.
 - ⏭️ **Skip to the next track** automatically (Spotify, YouTube Music, browsers), with a safety stop after 5 skips in a row.
 - ⏱️ **Give the source back** after N seconds of quiet, or **when the track is over** (shows the time left).
+- 🏷️ **Risk levels:** major label / independent / unknown / stream-safe, from MusicBrainz label and owner data
+  (e.g. *Republic Records → Universal*). Pick protect, warn only or ignore for each level.
+- 📚 **Stream-safe lists** built in (StreamBeats, NCS, FiXT), switches for libraries you pay for (Epidemic Sound,
+  Monstercat, Artlist, Soundstripe, Pretzel), and **import** your own list from a file or URL (text or CSV, such as a
+  Spotify playlist exported with Exportify).
+- 🎶 **Whitelist whole playlists:** *Scan a playlist* in any player (Spotify, YouTube Music, browsers) skips through it
+  and marks every song safe, and **Pear Desktop** (YouTube Music) queues are imported in one click.
+- 🟢 **Safe apps:** everything a chosen app plays (e.g. Pretzel) counts as safe.
 - ✅ **Allow list** of artists, songs and **record labels** (e.g. `label: Epidemic Sound`). One-click **Mark as safe**.
 - 🧠 **Song memory**, offline and growing, ~32 KB per minute of music.
 - 🌐 **Online fallbacks:** AcoustID (free, no key) → AudioTag → AudD (your own keys), each tried when the one before fails.
@@ -138,7 +152,8 @@ the music without muting your game or your friends.
 ## Privacy
 
 Everything runs on your PC. SongSentry sends:
-- **song titles** to MusicBrainz, only for browser media, to check "is this a real song?"
+- **artist and song titles** to MusicBrainz, to check "is this a real song?" (browsers) and who released it (risk
+  level, once per song, cached)
 - **an audio fingerprint** (not audio) of the first ~18 s of unrecognized music to AcoustID, when it hears a song start
   (can be turned off on the Recognition page)
 - **short audio clips (10–13 s) of unrecognized music** to AudioTag or AudD, **only if you add your own key**,
@@ -154,6 +169,23 @@ and a small log (passwords and tokens are removed from it) live in `%LocalAppDat
 No. It lowers the risk a lot for songs it recognizes, but nobody can see Twitch's or YouTube's private databases,
 and some music (brand-new releases, many remixes, most game soundtracks) isn't known to any recognizer. Detection
 from audio also needs about 5 seconds; Now Playing sources are instant.
+</details>
+
+<details><summary><b>How does it know a song is copyrighted?</b></summary>
+
+Nobody outside Twitch and YouTube can see their private databases, so SongSentry estimates it from public data. A
+recognized song is treated as risky unless it's on your allow list, a stream-safe list or from a safe app. Then who
+released it decides: major labels are almost always claimed, independent releases often are (distributors register
+them too), and Creative Commons or stream-safe library music is fine. You set what each level does on the
+**Safe music** page.
+</details>
+
+<details><summary><b>Can I whitelist my stream-safe playlist?</b></summary>
+
+Yes. Start the playlist and use **Scan a playlist**: SongSentry presses "next" every ~2 seconds and marks each song
+safe until the playlist starts over. It works with any player that shows up in Windows' media controls. In
+**Pear Desktop** (YouTube Music), **Allow my queue** reads the whole queue at once. It needs Pear's API Server
+plugin, and Pear asks you once. You can also import a Spotify playlist exported to CSV (for example with Exportify).
 </details>
 
 <details><summary><b>Windows says "Windows protected your PC".</b></summary>
