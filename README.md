@@ -190,7 +190,9 @@ delete a playlist as a whole.
   unlisted playlists).
 - **Spotify:** paste the playlist's Share link. Spotify only shares the first 100 songs of public playlists that way.
   For bigger or private playlists (or Liked Songs), open the playlist in the Spotify app, click a song, press
-  **Ctrl+A** then **Ctrl+C**, and paste: every song is read, about a minute for 600 songs.
+  **Ctrl+A** then **Ctrl+C**, and paste: every song is read. ⚠️ Spotify limits how fast songs can be looked up, so
+  this can be **really slow** (several minutes for a big playlist). Keep SongSentry open until it's saved. Songs it has
+  looked up once are remembered, so pasting the playlist again later only looks up the new ones.
 - **Pear Desktop** (YouTube Music): play the playlist and click **Read Pear's playlist**. It needs Pear's API Server
   plugin, and Pear asks you once.
 - **Any other player:** **Scan** presses "next" every ~2 seconds and saves each song until the playlist starts over.

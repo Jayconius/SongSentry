@@ -23,7 +23,8 @@ IRL streamers, show hosts, podcasters and Just Chatting creators.
   rename or delete a whole playlist at once. Add them by:
   - pasting a **YouTube or YouTube Music playlist link** (the whole playlist, in seconds),
   - pasting a **Spotify playlist link** (Spotify shares the first 100 songs), or **songs copied from the Spotify app**
-    (Ctrl+A, Ctrl+C): every song, also for private playlists and Liked Songs,
+    (Ctrl+A, Ctrl+C): every song, also for private playlists and Liked Songs. Spotify rate-limits these lookups, so
+    a big playlist can take several minutes,
   - **Pear Desktop** (YouTube Music) in one click, through Pear's API Server plugin,
   - scanning the playlist that's playing in any player (about 2 s per song).
 

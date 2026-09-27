@@ -350,7 +350,7 @@ namespace SongSentry
                         }
                         if (got[i] == null) Interlocked.Increment(ref failed);
                         int d = Interlocked.Increment(ref done);
-                        if (progress != null && (d % 10 == 0 || d == ids.Count)) progress("Reading copied songs… " + d + " of " + ids.Count);
+                        if (progress != null && (d % 10 == 0 || d == ids.Count)) progress("Reading copied songs… " + d + " of " + ids.Count + ". Spotify limits the speed, so this can take a while; keep SongSentry open.");
                     }
                 }) { IsBackground = true, Name = "spotify-tracks" };
                 th.Start(); workers.Add(th);

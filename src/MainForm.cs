@@ -1199,7 +1199,9 @@ namespace SongSentry
             string text = "", name = presetName ?? "";
             if (!AskPlaylist("Add a safe playlist",
                     "Paste a Spotify, YouTube or YouTube Music playlist link.\n\nBig or private Spotify playlist? Links only share the first 100 songs. " +
-                    "Open the playlist in the Spotify app, click a song, press Ctrl+A then Ctrl+C, and paste here.",
+                    "Open the playlist in the Spotify app, click a song, press Ctrl+A then Ctrl+C, and paste here.\n\n" +
+                    "Heads-up: Spotify limits how fast songs can be looked up, so pasted Spotify songs can be really slow " +
+                    "(several minutes for a big playlist). Keep SongSentry open until it says the playlist is saved.",
                     true, ref text, ref name, "Name (optional). Empty = the playlist's own name, or \"My Playlist #1\". Pick one to add the songs to it:", true)) return;
             text = text.Trim();
             if (text.Length == 0) return;
@@ -1641,7 +1643,9 @@ namespace SongSentry
                 "Spotify or YouTube link\nPaste a playlist's Share link. YouTube and YouTube Music links read the whole playlist (public or unlisted). " +
                 "Spotify links only share the first 100 songs, and only of public playlists.\n\n" +
                 "Songs copied from Spotify (big or private playlists, Liked Songs)\nOpen the playlist in the Spotify app, click a song, press Ctrl+A then Ctrl+C, " +
-                "then paste into Add playlist. Every song is read (about a minute for 600 songs).\n\n" +
+                "then paste into Add playlist. Every song is read, but Spotify limits how fast songs can be looked up, so this can be " +
+                "really slow (several minutes for a big playlist). Keep SongSentry open until it says the playlist is saved; " +
+                "songs it has looked up once are remembered, so pasting the playlist again later is quick.\n\n" +
                 "Pear Desktop (YouTube Music)\nPlay the playlist in Pear and click Read Pear's playlist. Turn on Pear's API Server plugin first (Plugins menu); " +
                 "the first time, Pear asks you to Allow SongSentry.\n\n" +
                 "Scan (any player)\nWindows only tells SongSentry which song is playing, so Scan presses \"next\" every couple of seconds and saves each song until the playlist starts over.\n\n" +
