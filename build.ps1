@@ -14,7 +14,7 @@ $refs = '/codepage:65001', '/nologo', '/r:System.dll', '/r:System.Core.dll', '/r
         '/r:System.Web.Extensions.dll', '/r:System.Security.dll', '/unsafe',
         "/r:$wm\Windows.Media.winmd", "/r:$wm\Windows.Foundation.winmd",
         "/r:$fw\System.Runtime.dll", "/r:$fw\System.Runtime.InteropServices.WindowsRuntime.dll", "/r:$fw\System.Threading.Tasks.dll"
-$core = 'Util', 'Settings', 'Obs', 'NowPlaying', 'MusicBrainz', 'Engine', 'AudioDevices', 'Landmark', 'SongLibrary', 'Capture', 'MusicDetect', 'AudD', 'AudioTag', 'Recognizer' | ForEach-Object { "$root\src\$_.cs" }
+$core = 'Util', 'Settings', 'Obs', 'NowPlaying', 'MusicBrainz', 'Engine', 'AudioDevices', 'Landmark', 'SongLibrary', 'Capture', 'MusicDetect', 'AudD', 'AudioTag', 'AcoustId', 'Recognizer' | ForEach-Object { "$root\src\$_.cs" }
 $ui = 'Theme', 'MainForm', 'Program' | ForEach-Object { "$root\src\$_.cs" }
 
 New-Item -ItemType Directory -Force "$root\build", "$root\dist" | Out-Null
@@ -31,10 +31,10 @@ if ($LASTEXITCODE) { throw 'MakeAssets compile failed' }
 & "$root\build\MakeAssets.exe" $root
 if ($LASTEXITCODE) { throw 'MakeAssets failed' }
 
-Write-Host '> Building SongSentry.exe' -ForegroundColor Cyan
+Write-Host '> Building SongSentry.exe (embeds Chromaprint fpcalc, LGPL 2.1, see THIRD_PARTY_NOTICES.md)' -ForegroundColor Cyan
 & $csc /target:winexe /optimize+ /platform:anycpu /out:"$root\dist\SongSentry.exe" `
     /win32icon:"$root\assets\icon.ico" /win32manifest:"$root\src\app.manifest" $refs `
-    "$root\src\AssemblyInfo.cs" $core $ui
+    "/resource:$root\third_party\chromaprint\fpcalc.exe,fpcalc.exe" "$root\src\AssemblyInfo.cs" $core $ui
 if ($LASTEXITCODE) { throw 'App compile failed' }
 
 Write-Host '> Rendering README screenshots and graphics (fake OBS, made-up songs)' -ForegroundColor Cyan

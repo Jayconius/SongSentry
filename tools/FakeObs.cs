@@ -31,7 +31,8 @@ namespace SongSentry
                 case "GetInputList":
                     return Json.Make("inputs", new System.Collections.ArrayList(In.Values.Select(x => (object)Json.Make("inputName", x.Name, "inputKind", x.Kind)).ToList()));
                 case "GetInputSettings":
-                    return Json.Make("inputSettings", i.Kind == "wasapi_process_output_capture" ? Json.Make("window", Window) : Json.Make());
+                    return Json.Make("inputSettings", i.Kind == "wasapi_process_output_capture" ? Json.Make("window", Window)
+                        : i.DeviceId != null ? Json.Make("device_id", i.DeviceId) : Json.Make());
                 case "GetInputMute": return Json.Make("inputMuted", i.Muted);
                 case "GetInputVolume": return Json.Make("inputVolumeMul", i.VolumeMul);
                 case "GetInputAudioTracks": return Json.Make("inputAudioTracks", i.Tracks.ToDictionary(t => t.Key, t => (object)t.Value));

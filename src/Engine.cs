@@ -186,6 +186,12 @@ namespace SongSentry
             });
         }
 
+        /// The source went quiet: whatever song was heard is over now (no hold), so the restore countdown starts at once.
+        public void OnAudioSilence(string input)
+        {
+            Post(() => { Run r = RunOf(input); if (r.Audio != null) { r.Audio = null; Evaluate(); } });
+        }
+
         /// A recognised song counts as "still playing" this long after the last matching window (windows come every 2 s).
         const double AudioHold = 5;
 
@@ -804,7 +810,7 @@ namespace SongSentry
 
         public static string SongKey(MediaInfo m)
         {
-            return m == null ? null : ((m.Artist ?? "").Trim() + "|" + (m.Title ?? "").Trim()).ToLowerInvariant();
+            return m == null ? null : TextNorm.Norm(m.Artist) + "|" + TextNorm.Norm(m.Title);
         }
 
         public static string SongText(MediaInfo m)

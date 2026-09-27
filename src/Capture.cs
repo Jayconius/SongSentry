@@ -12,7 +12,7 @@ namespace SongSentry
     public sealed class AudioCapture : IDisposable
     {
         public const int Rate = 8000;
-        const int BufferSeconds = 20;
+        const int BufferSeconds = 30;   // AcoustID needs the first 18 s of a song, taken up to ~28 s after it started
         const uint LOOPBACK = 0x00020000, EVENTCALLBACK = 0x00040000, AUTOCONVERTPCM = 0x80000000, SRC_DEFAULT_QUALITY = 0x08000000;
         static Guid IID_IAudioClient = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
         static Guid IID_IAudioCaptureClient = new Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
@@ -73,7 +73,7 @@ namespace SongSentry
         /// deviceId as OBS stores it ("default" = the default device). Output devices are captured by loopback.
         public static AudioCapture ForDevice(string deviceId, bool output)
         {
-            var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+            var en = NewEnumerator();
             IMMDevice d;
             if (string.IsNullOrEmpty(deviceId) || deviceId == "default") Check(en.GetDefaultAudioEndpoint(output ? 0 : 1, 0, out d));
             else Check(en.GetDevice(deviceId, out d));
@@ -251,7 +251,12 @@ namespace SongSentry
             [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice device);
             [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
         }
-        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorCo { }
+        // Created by CLSID and cast only to the interface: two [ComImport] classes with the same CLSID in one assembly
+        // clash ("cannot cast MMDeviceEnumeratorCo to MMDeviceEnumeratorCo"), depending on which one loads first.
+        static IMMDeviceEnumerator NewEnumerator()
+        {
+            return (IMMDeviceEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")));
+        }
         [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         interface IMMDevice
         {

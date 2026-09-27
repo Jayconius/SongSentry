@@ -7,7 +7,8 @@ namespace SongSentry
 {
     /// Listens to every protected channel's real audio and names the song in it:
     ///   1. song memory (offline landmark matcher, ~7 ms per check),
-    ///   2. if that doesn't know it and it sounds like music: AudioTag / AudD with the user's own key (rate-limited),
+    ///   2. if that doesn't know it and it sounds like music, online services as fallbacks for each other: AcoustID (free,
+    ///      when the song's start was heard) -> AudioTag -> AudD (both with the user's own key), rate-limited,
     ///   3. every identified song is learned into the memory at its real position, and keeps being learned while it plays
     ///      (Now Playing songs too, where the player reports the position), so next time it's recognised offline.
     public sealed class Recognizer : IDisposable
@@ -24,7 +25,7 @@ namespace SongSentry
         readonly Dictionary<string, Monitor> mons = new Dictionary<string, Monitor>();
         readonly Thread thread;
         volatile bool running = true;
-        DateTime lastSave = DateTime.UtcNow, lastOnlineGlobal = DateTime.MinValue;
+        DateTime lastSave = DateTime.UtcNow, lastOnlineGlobal = DateTime.MinValue, lastAcoustId = DateTime.MinValue;
 
         sealed class Monitor
         {
@@ -33,6 +34,9 @@ namespace SongSentry
             public string State = "Starting…";
             public DateTime RetryAt, NextOnline, SilentSince = DateTime.MaxValue;
             public int MusicStreak;
+            public DateTime Onset = DateTime.MinValue; public bool OnsetTried, MusicSinceOnset;   // when sound started after silence
+            public volatile bool Busy;                                         // an online lookup is running
+            public SongInfo PendingSong; public double PendingPos; public DateTime PendingAt;   // its answer, applied next tick
             public SongHit LastHit; public DateTime LastHitAt;
             public SongInfo Follow; public double FollowPos; public DateTime FollowAt, FollowStarted; public double FollowLearnedTo;
         }
@@ -168,15 +172,31 @@ namespace SongSentry
         void Check(Monitor m, Channel ch, List<MediaInfo> media)
         {
             var now = DateTime.UtcNow;
+            ApplyPending(m, now);
             short[] clip = m.Cap.Last(Window);
             if (clip.Length < AudioCapture.Rate * 3) { engine.OnAudio(m.Input, null); return; }
-            if (Rms(clip) < SilenceRms)
+            // Quiet for the last 1.5 s = the music stopped (pause / end): release at once instead of waiting for the whole window.
+            if (Rms(m.Cap.Last(1.5)) < SilenceRms)
             {
-                if (m.SilentSince == DateTime.MaxValue) m.SilentSince = now;
+                if (m.SilentSince == DateTime.MaxValue) m.SilentSince = now.AddSeconds(-1.5);
                 if ((now - m.SilentSince).TotalSeconds > 3) m.Follow = null;   // song over
                 m.MusicStreak = 0;
-                engine.OnAudio(m.Input, null);
+                engine.OnAudioSilence(m.Input);
                 return;
+            }
+            // Sound after >= 1.5 s of silence: something may have just started. Find the exact moment (first 100 ms block
+            // above the silence level) - AcoustID can only recognise a song from its start.
+            if (m.SilentSince != DateTime.MaxValue && (now - m.SilentSince).TotalSeconds >= 1.5)
+            {
+                int block = AudioCapture.Rate / 10, idx = 0;
+                for (int i = 0; i + block <= clip.Length; i += block)
+                {
+                    double s = 0; for (int k = i; k < i + block; k++) s += (double)clip[k] * clip[k];
+                    if (Math.Sqrt(s / block) / 32768 >= SilenceRms) { idx = i; break; }
+                }
+                m.Onset = now.AddSeconds(-(clip.Length - idx) / (double)AudioCapture.Rate);
+                m.OnsetTried = false; m.MusicSinceOnset = false;
+                Log.Write(m.Input + ": sound started after " + (now - m.SilentSince).TotalSeconds.ToString("0") + " s of silence");
             }
             m.SilentSince = DateTime.MaxValue;
 
@@ -217,52 +237,95 @@ namespace SongSentry
             engine.OnAudio(m.Input, m.Follow != null && m.Follow.Source != "Now Playing"
                 ? new SongHit { Song = m.Follow, Votes = 0, PositionSec = m.FollowPos } : null);
 
-            // 3. unknown music: ask an online service with the user's own key
+            // 3. unknown music: online services, each a fallback for the one before
             bool music = MusicDetector.LooksLikeMusic(clip, AudioCapture.Rate);
             m.MusicStreak = music ? m.MusicStreak + 1 : 0;
+            if (music) m.MusicSinceOnset = true;
+            if (m.Busy || m.Follow != null || np != null) return;
             bool haveKey = !string.IsNullOrWhiteSpace(settings.AudioTagKey) || !string.IsNullOrWhiteSpace(settings.AudDKey);
-            if (m.MusicStreak >= 2 && haveKey && m.Follow == null && np == null && now >= m.NextOnline && (now - lastOnlineGlobal).TotalSeconds >= 8)
-                AskOnline(m, now);
-        }
-
-        void AskOnline(Monitor m, DateTime now)
-        {
-            lastOnlineGlobal = now;
-            AudDResult r = null; string source = null;
-            short[] clip = m.Cap.Last(13);
-            if (!string.IsNullOrWhiteSpace(settings.AudioTagKey) && clip.Length >= AudioCapture.Rate * AudioTag.MinSeconds)
+            double onsetAge = m.Onset == DateTime.MinValue ? double.MaxValue : (now - m.Onset).TotalSeconds;
+            // AcoustID: once per song start, if any window since the start sounded like music (game sounds alone don't).
+            bool acoustIdChance = settings.UseAcoustId && AcoustId.Available && !m.OnsetTried && onsetAge <= 28 && m.MusicSinceOnset;
+            if (acoustIdChance)
             {
-                r = AudioTag.Recognize(settings.AudioTagKey, clip, AudioCapture.Rate);
-                source = "AudioTag";
-                if (!r.Ok) Log.Write("AudioTag: " + r.Error);
-            }
-            if ((r == null || !r.Found) && !string.IsNullOrWhiteSpace(settings.AudDKey))
-            {
-                clip = m.Cap.Last(10);
-                r = AudD.Recognize(settings.AudDKey, clip, AudioCapture.Rate);
-                source = "AudD";
-                if (!r.Ok) Log.Write("AudD: " + r.Error);
-            }
-            var after = DateTime.UtcNow;
-            if (r == null || !r.Found)
-            {
-                m.NextOnline = after.AddSeconds(OnlineCooldownMiss);
+                if (onsetAge < AcoustId.ClipSeconds + 0.5) return;   // heard the start: wait until AcoustID has enough of it
+                if ((now - lastAcoustId).TotalSeconds < 15) return;   // be gentle with the free service
+                m.OnsetTried = true;
+                lastAcoustId = now;
+                var start = m.Cap.Last(onsetAge).Take((int)(AcoustId.ClipSeconds * AudioCapture.Rate)).ToArray();
+                RunOnline(m, now, start, onsetAge, haveKey);
                 return;
             }
-            m.NextOnline = after.AddSeconds(OnlineCooldownHit);
-            var song = Library.GetOrAdd(r.Artist, r.Title, r.Album, r.Label, source, settings.IsAllowed(r.Artist, r.Title, r.Label));
-            // Where in the song did the clip start? AudD reports it ("mm:ss"); AudioTag doesn't, so park that audio past
-            // anything learned so far - it still teaches the memory this stretch of the song.
-            double pos;
-            if (!TryTimecode(r.Timecode, out pos)) pos = song.Track.Frames * LandmarkIndex.FrameSec + 30;
-            Library.Learn(song, clip, pos);
-            double endPos = pos + clip.Length / (double)AudioCapture.Rate + (after - now).TotalSeconds;
-            StartFollow(m, song, endPos, after);
-            m.FollowLearnedTo = endPos;
-            engine.OnAudio(m.Input, new SongHit { Song = song, PositionSec = endPos });
-            Log.Write(m.Input + ": " + source + " identified " + song.Text + (string.IsNullOrEmpty(r.Label) ? "" : " [" + r.Label + "]"));
+            if (acoustIdChance == false && settings.UseAcoustId && !m.OnsetTried && onsetAge < AcoustId.ClipSeconds + 0.5) return;   // may still become a chance
+            if (m.MusicStreak >= 2 && haveKey && now >= m.NextOnline && (now - lastOnlineGlobal).TotalSeconds >= 8)
+                RunOnline(m, now, null, 0, true);
         }
 
+        /// Runs the online fallback chain on a worker thread (AcoustID can take ~9 s when it finds nothing):
+        /// AcoustID (song start, free) -> AudioTag (user key) -> AudD (user key). The first answer wins.
+        void RunOnline(Monitor m, DateTime now, short[] songStart, double onsetAge, bool keyed)
+        {
+            m.Busy = true;
+            lastOnlineGlobal = now;
+            short[] clip13 = m.Cap.Last(13), clip10 = m.Cap.Last(10);
+            string atKey = settings.AudioTagKey, adKey = settings.AudDKey;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    AudDResult r = null; string source = null; short[] used = null; double usedPos = -1;
+                    if (songStart != null)
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        r = AcoustId.Recognize(songStart, AudioCapture.Rate);
+                        source = "AcoustID"; used = songStart; usedPos = 0;   // the clip IS the song's start
+                        Log.Write(m.Input + ": AcoustID " + (!r.Ok ? "error: " + r.Error : r.Found ? "found it" : "didn't know it") + " (" + sw.ElapsedMilliseconds + " ms)");
+                        string dump = Environment.GetEnvironmentVariable("SONGSENTRY_DUMP_ACOUSTID");   // diagnostics only
+                        if (!string.IsNullOrEmpty(dump)) System.IO.File.WriteAllBytes(dump, Pcm(songStart));
+                    }
+                    if ((r == null || !r.Found) && keyed && !string.IsNullOrWhiteSpace(atKey) && clip13.Length >= AudioCapture.Rate * AudioTag.MinSeconds)
+                    {
+                        r = AudioTag.Recognize(atKey, clip13, AudioCapture.Rate);
+                        source = "AudioTag"; used = clip13; usedPos = -1;
+                        if (!r.Ok) Log.Write("AudioTag: " + r.Error);
+                    }
+                    if (source == "AudioTag") Log.Write(m.Input + ": AudioTag " + (!r.Ok ? "error: " + r.Error : r.Found ? "found it" : "didn't know it"));
+                    if ((r == null || !r.Found) && keyed && !string.IsNullOrWhiteSpace(adKey))
+                    {
+                        r = AudD.Recognize(adKey, clip10, AudioCapture.Rate);
+                        source = "AudD"; used = clip10; usedPos = -1;
+                        if (!r.Ok) Log.Write("AudD: " + r.Error);
+                    }
+                    var after = DateTime.UtcNow;
+                    if (r == null || !r.Found) { m.NextOnline = after.AddSeconds(OnlineCooldownMiss); return; }
+                    m.NextOnline = after.AddSeconds(OnlineCooldownHit);
+                    var song = Library.GetOrAdd(r.Artist, r.Title, r.Album, r.Label, source, settings.IsAllowed(r.Artist, r.Title, r.Label));
+                    // Where in the song did the clip start? AcoustID: at 0. AudD reports "mm:ss". AudioTag doesn't say, so that
+                    // audio is parked past anything learned so far - it still teaches the memory this stretch of the song.
+                    double pos = usedPos;
+                    if (pos < 0 && !TryTimecode(r.Timecode, out pos)) pos = song.Track.Frames * LandmarkIndex.FrameSec + 30;
+                    Library.Learn(song, used, pos);
+                    // song position "now": AcoustID's clip began onsetAge s before `now`; the others ended at `now`
+                    double posAtNow = songStart != null && source == "AcoustID" ? onsetAge : pos + used.Length / (double)AudioCapture.Rate;
+                    lock (m) { m.PendingSong = song; m.PendingPos = posAtNow + (after - now).TotalSeconds; m.PendingAt = after; }
+                    Log.Write(m.Input + ": " + source + " identified " + song.Text + (string.IsNullOrEmpty(r.Label) ? "" : " [" + r.Label + "]"));
+                }
+                catch (Exception e) { Log.Write("online recognition: " + e.Message); }
+                finally { m.Busy = false; }
+            });
+        }
+
+        /// Apply an online answer (from the worker) on the recognizer thread.
+        void ApplyPending(Monitor m, DateTime now)
+        {
+            SongInfo s; double pos; DateTime at;
+            lock (m) { s = m.PendingSong; pos = m.PendingPos; at = m.PendingAt; m.PendingSong = null; }
+            if (s == null || m.Cap == null) return;
+            double posNow = pos + (now - at).TotalSeconds;
+            StartFollow(m, s, posNow, now);
+            m.FollowLearnedTo = posNow;
+            engine.OnAudio(m.Input, new SongHit { Song = s, PositionSec = posNow });
+        }
         void StartFollow(Monitor m, SongInfo s, double posNow, DateTime now)
         {
             m.Follow = s; m.FollowPos = posNow; m.FollowAt = now; m.FollowStarted = now; m.FollowLearnedTo = posNow - Window;
@@ -282,6 +345,8 @@ namespace SongSentry
             Library.Learn(m.Follow, pcm, posNow - pcm.Length / (double)AudioCapture.Rate);
             m.FollowLearnedTo = posNow;
         }
+
+        static byte[] Pcm(short[] x) { var b = new byte[x.Length * 2]; Buffer.BlockCopy(x, 0, b, 0, b.Length); return b; }
 
         static bool TryTimecode(string tc, out double sec)
         {

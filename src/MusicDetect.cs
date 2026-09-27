@@ -18,6 +18,9 @@ namespace SongSentry
         // mono 16-bit at any rate -> decimate by 4 (~11-12 kHz) -> features over the whole clip
         public static MusicFeatures Analyze(short[] pcm, int rate)
         {
+            // Tuned on ~12 kHz audio: its frequency/time resolution matters (at 8 kHz the finer bins make sustained notes
+            // look unsteady and the song intro tested far below the music threshold). So bring low rates up to 12 kHz first.
+            if (rate < 11025) { pcm = Upsample(pcm, rate, 12000); rate = 12000; }
             int dec = Math.Max(1, (int)Math.Round(rate / 11025.0)), sr = rate / dec;   // 48 kHz -> 12 kHz, 8 kHz stays
             var x = new float[pcm.Length / dec];
             for (int i = 0; i < x.Length; i++) { int s = 0; for (int k = 0; k < dec; k++) s += pcm[i * dec + k]; x[i] = s / (dec * 32768f); }
@@ -107,6 +110,19 @@ namespace SongSentry
         {
             var m = Analyze(pcm, rate);
             return m.Tonal >= 0.4 && m.Continuity >= 0.8;
+        }
+
+        static short[] Upsample(short[] x, int from, int to)
+        {
+            int n = (int)((long)x.Length * to / from);
+            var o = new short[n];
+            double step = (double)from / to;
+            for (int i = 0; i < n; i++)
+            {
+                double p = i * step; int k = (int)p; double f = p - k;
+                o[i] = (short)(k + 1 < x.Length ? x[k] * (1 - f) + x[k + 1] * f : x[Math.Min(k, x.Length - 1)]);
+            }
+            return o;
         }
 
         static double Pearson(double[] a, double[] b)

@@ -345,6 +345,18 @@ namespace SongSentry
                 Check(obs.Calls.Count == 1, "muted once: " + string.Join("; ", obs.Calls));
             });
 
+            Test("Titles from different services match (punctuation / case)", () =>
+            {
+                Check(TextNorm.Norm("I Knew You Were Trouble.") == TextNorm.Norm("i knew you were  trouble"), "trailing dot, case, spaces");
+                Check(SongLibrary.KeyOf("Taylor Swift", "Trouble.") == SongLibrary.KeyOf("TAYLOR SWIFT", "Trouble"), "library key");
+                var s = new Settings(); s.Allow.Add("track:Sylver - Lay All Your Love On Me");
+                Check(s.IsAllowed("Sylver", "Lay All Your Love on Me!"), "allow list ignores punctuation");
+                var lib = new SongLibrary();
+                var a1 = lib.GetOrAdd("Taylor Swift", "I Knew You Were Trouble", null, null, "AudioTag", false);
+                var a2 = lib.GetOrAdd("Taylor Swift", "I Knew You Were Trouble.", null, null, "AcoustID", false);
+                Check(a1 == a2 && lib.Count == 1, "one song in the memory, not two");
+            });
+
             Test("Old settings files with a single app still load", () =>
             {
                 File.WriteAllText(Paths.File("settings.json"), "{\"channels\":[{\"input\":\"Music\",\"enabled\":true,\"app\":\"spotify\",\"action\":\"Mute\"}]}");

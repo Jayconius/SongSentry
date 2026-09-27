@@ -21,7 +21,12 @@ namespace SongSentry
             [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
         }
 
-        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorCo { }
+        // Created by CLSID and cast only to the interface: two [ComImport] classes with the same CLSID in one assembly
+        // clash ("cannot cast MMDeviceEnumeratorCo to MMDeviceEnumeratorCo"), depending on which one loads first.
+        static IMMDeviceEnumerator NewEnumerator()
+        {
+            return (IMMDeviceEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")));
+        }
 
         [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         interface IMMDeviceCollection
@@ -100,7 +105,7 @@ namespace SongSentry
 
         static string RenderEndpointFor(string deviceId, bool sourceIsOutput)
         {
-            var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+            var en = NewEnumerator();
             IMMDevice d;
             if (string.IsNullOrEmpty(deviceId) || deviceId == "default")
             {
@@ -128,7 +133,7 @@ namespace SongSentry
 
         static List<string> SessionApps(string renderId)
         {
-            var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+            var en = NewEnumerator();
             IMMDevice d;
             if (en.GetDevice(renderId, out d) != 0) return new List<string>();
             var iid = new Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
@@ -176,7 +181,7 @@ namespace SongSentry
         {
             try
             {
-                var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+                var en = NewEnumerator();
                 IMMDevice d;
                 if (en.GetDevice(id, out d) != 0 || d == null) return null;
                 IPropertyStore ps;

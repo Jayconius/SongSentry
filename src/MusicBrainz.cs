@@ -19,7 +19,7 @@ namespace SongSentry
     /// Free MusicBrainz API: max 1 request per second and a meaningful User-Agent. Results are cached.
     public static class MusicBrainz
     {
-        public const string UserAgent = "SongSentry/1.0 beta ( https://github.com/Jayconius )";
+        public const string UserAgent = "SongSentry/1.1 beta ( https://github.com/Jayconius )";
         static readonly object rate = new object();
         static DateTime last = DateTime.MinValue;
         static readonly Dictionary<string, SongMatch> cache = new Dictionary<string, SongMatch>();

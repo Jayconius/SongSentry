@@ -112,8 +112,8 @@ namespace SongSentry
                 // column 2: recognition
                 Card(g, new RectangleF(490, 100, 300, 190), Theme.GPulse, "Song memory", "Offline landmark fingerprints. Recognises a known song in ~5 s, " +
                      "mid-song, even under loud game sound.", fH, fB, fI, Theme.Accent);
-                Card(g, new RectangleF(490, 316, 300, 190), Theme.GGlobe, "Online (optional)", "Unknown music? Your own free AudioTag or AudD key names it " +
-                     "once; then it's learned.", fH, fB, fI, Theme.Accent);
+                Card(g, new RectangleF(490, 316, 300, 190), Theme.GGlobe, "Online fallbacks", "Unknown music? AcoustID (free) names it from its start; " +
+                     "your AudioTag or AudD key covers the rest.", fH, fB, fI, Theme.Accent);
                 // column 3: action
                 Card(g, new RectangleF(940, 100, 300, 406), Theme.GMute, "Acts in OBS", "", fH, fB, fI, Theme.Coral);
                 string[] lines = { "Mute on stream only", "Mute everywhere", "Turn down", "Warn only", "",

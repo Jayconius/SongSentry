@@ -164,6 +164,7 @@ namespace SongSentry
             if (id == "opt:hidden") return settings.StartHidden ? 1f : 0f;
             if (id == "opt:skip") return settings.AutoSkip ? 1f : 0f;
             if (id == "opt:listen") return settings.ListenToAudio ? 1f : 0f;
+            if (id == "opt:acoustid") return settings.UseAcoustId ? 1f : 0f;
             if (id == "opt:startwin") return startWithWindows ? 1f : 0f;
             var c = settings.Find(id.Substring(id.IndexOf(':') + 1));
             return c != null && c.Enabled ? 1f : 0f;
@@ -826,12 +827,14 @@ namespace SongSentry
 
             // online services
             var on = new RectangleF(X0, lis.Bottom + 16, colW, H - lis.Bottom - 32);
-            Section(g, on, "ONLINE RECOGNITION  ·  OPTIONAL, YOUR OWN KEYS");
-            Theme.Wrap(g, "For music the song memory doesn't know yet. Only short clips of unknown music are sent (at most one every 30 s per source). " +
-                          "Every song they name is learned, so it's only looked up once.", fTiny, Theme.Dim, new RectangleF(on.X + 18, on.Y + 36, colW - 36, 62));
-            KeyField(g, tbAudioTag, "AudioTag  ·  free every month", "url:audiotag", "Get a free key", on.X + 18, on.Y + 104, colW - 36);
-            KeyField(g, tbAudD, "AudD  ·  best in game noise", "url:audd", "Get a key (300 free)", on.X + 18, on.Y + 176, colW - 36);
-            Theme.Wrap(g, "Keys are stored encrypted on this PC and never shared.", fTiny, Theme.Dim, new RectangleF(on.X + 18, on.Bottom - 30, colW - 36, 18));
+            Section(g, on, "ONLINE FALLBACKS  ·  EACH ONE TRIES WHEN THE LAST FAILS");
+            Theme.Wrap(g, "For music the song memory doesn't know yet. Every song they name is learned, so it's only looked up once.",
+                       fTiny, Theme.Dim, new RectangleF(on.X + 18, on.Y + 34, colW - 36, 32));
+            OptionRow(g, "opt:acoustid", "AcoustID  ·  free, no key needed", on.Y + 64, on);
+            KeyField(g, tbAudioTag, "AudioTag  ·  free", "url:audiotag", "Get a free key", on.X + 18, on.Y + 110, colW - 36);
+            KeyField(g, tbAudD, "AudD  ·  best in game noise", "url:audd", "Get a key (300 free)", on.X + 18, on.Y + 180, colW - 36);
+            Theme.Wrap(g, "Only a fingerprint (AcoustID) or a short clip (AudioTag, AudD) of unknown music is sent; keys stay encrypted here. " +
+                          "Includes Chromaprint fpcalc (LGPL 2.1).", fTiny, Theme.Dim, new RectangleF(on.X + 18, on.Bottom - 58, colW - 36, 50));
 
             // song memory
             float rx = X0 + colW + 24;
@@ -1119,6 +1122,7 @@ namespace SongSentry
             else if (id == "restore:quiet") { settings.Restore = RestoreMode.AfterQuiet; settings.Save(); engine.Reevaluate(); }
             else if (id == "restore:end") { settings.Restore = RestoreMode.TrackEnd; settings.Save(); engine.Reevaluate(); }
             else if (id == "opt:listen") { settings.ListenToAudio = !settings.ListenToAudio; settings.Save(); UpdateAnim(); ShowToast(settings.ListenToAudio ? "Listening to your sources' audio" : "Audio recognition off (Now Playing only)"); }
+            else if (id == "opt:acoustid") { settings.UseAcoustId = !settings.UseAcoustId; settings.Save(); UpdateAnim(); ShowToast(settings.UseAcoustId ? "AcoustID on (free)" : "AcoustID off"); }
             else if (id == "mem:clear")
             {
                 if (MessageBox.Show(this, "Forget all " + recognizer.Library.Count + " learned songs? SongSentry will re-learn them as they play.", "SongSentry",

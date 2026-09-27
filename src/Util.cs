@@ -8,6 +8,24 @@ using System.Web.Script.Serialization;
 
 namespace SongSentry
 {
+    static class TextNorm
+    {
+        /// Compares song / artist names across services: "I Knew You Were Trouble." == "i knew you were trouble"
+        /// (case, punctuation and extra spaces ignored).
+        public static string Norm(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            var sb = new StringBuilder(s.Length);
+            bool space = false;
+            foreach (char c in s.Trim().ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c)) { if (space && sb.Length > 0) sb.Append(' '); sb.Append(c); space = false; }
+                else space = true;
+            }
+            return sb.ToString();
+        }
+    }
+
     static class Paths
     {
         public static string Data = Path.Combine(   // LogicTest points this at a temp folder

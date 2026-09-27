@@ -37,7 +37,7 @@ namespace SongSentry
 
         static string PathOf { get { return Paths.File("songs.dat"); } }
 
-        public static string KeyOf(string artist, string title) { return ((artist ?? "").Trim() + "\n" + (title ?? "").Trim()).ToLowerInvariant(); }
+        public static string KeyOf(string artist, string title) { return TextNorm.Norm(artist) + "\n" + TextNorm.Norm(title); }
 
         public int Count { get { lock (gate) return byKey.Count; } }
         public long SizeBytes { get { lock (gate) return (long)index.HashCount * 8; } }

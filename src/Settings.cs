@@ -63,7 +63,8 @@ namespace SongSentry
         public double RestoreDelay = 2.0;       // seconds of "no risky song" before restoring a source
         public RestoreMode Restore = RestoreMode.AfterQuiet;
         public bool AutoSkip;                   // send "next track" to the player when a risky song starts
-        public bool ListenToAudio = true;       // recognise songs in the channels' actual audio (song memory + online keys)
+        public bool ListenToAudio = true;
+        public bool UseAcoustId = true;         // free, no key: recognises songs whose start was heard       // recognise songs in the channels' actual audio (song memory + online keys)
         public string AudDKey = "", AudioTagKey = "";   // optional, user-supplied (stored encrypted); never shipped with a key
         public List<Channel> Channels = new List<Channel>();
         public List<string> Hidden = new List<string>();  // OBS input names hidden from the Channels list
@@ -107,7 +108,11 @@ namespace SongSentry
             {
                 string e = raw.ToLowerInvariant();
                 if (e.StartsWith("artist:") && a.Length > 0 && ArtistMatches(a, e.Substring(7))) return true;
-                if (e.StartsWith("track:") && e.Substring(6) == a + " - " + t) return true;
+                if (e.StartsWith("track:"))
+                {
+                    int d = e.IndexOf(" - ", 6, StringComparison.Ordinal);
+                    if (d > 0 && TextNorm.Norm(e.Substring(6, d - 6)) == TextNorm.Norm(a) && TextNorm.Norm(e.Substring(d + 3)) == TextNorm.Norm(t)) return true;
+                }
                 if (e.StartsWith("label:") && lb.Length > 0 && (lb == e.Substring(6) || lb.StartsWith(e.Substring(6) + " ") || lb.StartsWith(e.Substring(6) + ","))) return true;
             }
             return false;
@@ -149,6 +154,7 @@ namespace SongSentry
                 s.Restore = ParseEnum(Json.Str(d, "restore"), RestoreMode.AfterQuiet);
                 s.AutoSkip = Json.Bool(d, "autoSkip", false);
                 s.ListenToAudio = Json.Bool(d, "listenToAudio", true);
+                s.UseAcoustId = Json.Bool(d, "useAcoustId", true);
                 s.AudDKey = Unprotect(Json.Str(d, "auddKey"));
                 s.AudioTagKey = Unprotect(Json.Str(d, "audioTagKey"));
                 foreach (var c in Json.Objs(d.ContainsKey("channels") ? d["channels"] : null))
@@ -182,7 +188,7 @@ namespace SongSentry
             try
             {
                 var d = Json.Make("host", Host, "port", Port, "password", Protect(Password), "closeToTray", CloseToTray,
-                    "startHidden", StartHidden, "paused", Paused, "restoreDelay", RestoreDelay, "restore", Restore.ToString(), "autoSkip", AutoSkip, "listenToAudio", ListenToAudio,
+                    "startHidden", StartHidden, "paused", Paused, "restoreDelay", RestoreDelay, "restore", Restore.ToString(), "autoSkip", AutoSkip, "listenToAudio", ListenToAudio, "useAcoustId", UseAcoustId,
                     "auddKey", Protect(AudDKey), "audioTagKey", Protect(AudioTagKey), "allow", Allow, "hidden", Hidden,
                     "channels", Channels.Select(c => Json.Make("input", c.Input, "enabled", c.Enabled, "apps", c.Apps,
                         "action", c.Action.ToString(), "duck", c.DuckPercent, "mode", c.Mode.ToString())).ToList());

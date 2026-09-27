@@ -6,7 +6,7 @@ namespace SongSentry
 {
     static class Program
     {
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         /// "Start with Windows": a per-user Run entry that starts SongSentry hidden in the tray (no admin needed).
