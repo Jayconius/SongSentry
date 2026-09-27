@@ -24,7 +24,7 @@ namespace SongSentry
             int frames = (x.Length - N) / Hop + 1;
             if (frames < 20) return new MusicFeatures();
             var win = new float[N]; for (int i = 0; i < N; i++) win[i] = (float)(0.5 - 0.5 * Math.Cos(2 * Math.PI * i / (N - 1)));
-            int lo = (int)(120.0 * N / sr), hi = (int)(4000.0 * N / sr);
+            int lo = (int)(120.0 * N / sr), hi = Math.Min((int)(4000.0 * N / sr), N / 2 - 1);   // at 8 kHz, 4 kHz is exactly Nyquist
             var db = new float[frames][]; var energy = new double[frames]; var chroma = new double[frames][];
             var re = new double[N]; var im = new double[N];
             for (int f = 0; f < frames; f++)

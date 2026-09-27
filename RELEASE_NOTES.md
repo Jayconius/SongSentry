@@ -3,7 +3,8 @@
 *Released 2026-09-27 · Windows 10 (2004+) / 11 · OBS 28+ · single exe, nothing to install*
 
 The first public beta of **SongSentry**. It keeps licensed music off your stream by recognizing songs in your OBS
-sources and muting them **on the stream only**, so your recording keeps the music.
+sources and muting them **on the stream only**, so your recording keeps the music. It's made for every kind of streamer:
+game streamers, **VTubers**, IRL streamers, show hosts, podcasters and Just Chatting creators.
 
 > **Beta:** SongSentry reduces the risk of DMCA mutes and strikes. It can't guarantee zero. Please report anything odd
 > in [Issues](https://github.com/Jayconius/SongSentry/issues).

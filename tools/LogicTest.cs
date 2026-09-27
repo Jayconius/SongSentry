@@ -320,6 +320,31 @@ namespace SongSentry
                 Check(s.IsAllowed("x", "y", "Audio Captain Ltd") && !s.IsAllowed("x", "y", "Audio Captains"), "label prefix matching");
             });
 
+            Test("Music detector works on 8 kHz audio (regression: crashed at Nyquist)", () =>
+            {
+                var x = new short[5 * 8000];
+                var rnd = new Random(2);
+                for (int k = 0; k < x.Length; k++) x[k] = (short)(3000 * Math.Sin(2 * Math.PI * 440 * k / 8000.0) + rnd.Next(-500, 500));
+                bool music = MusicDetector.LooksLikeMusic(x, 8000);
+                Check(true, "no exception");
+                var noise = new short[5 * 8000];
+                for (int k = 0; k < noise.Length; k++) noise[k] = (short)rnd.Next(-8000, 8000);
+                Check(!MusicDetector.LooksLikeMusic(noise, 8000), "white noise is not music");
+                Check(!MusicDetector.LooksLikeMusic(new short[8000], 8000), "too short / silence is not music");
+            });
+
+            Test("Same song via Now Playing and via the audio counts as one song", () =>
+            {
+                var obs = new FakeObs(); obs.Add("Music", "x", false, 1, true);
+                var s = new Settings(); s.Channels.Add(new Channel { Input = "Music", Enabled = true, App = "spotify", Action = ActionKind.Mute });
+                var e = Make(obs, s);
+                e.OnMedia(new List<MediaInfo> { Song("spotify", "Taylor Swift", "Trouble", PlayState.Playing) });
+                e.OnAudio("Music", new SongHit { Song = new SongInfo { Artist = "Taylor Swift", Title = "Trouble", Source = "Now Playing" }, Votes = 40 });
+                e.OnMedia(new List<MediaInfo>());   // player gone, audio still hears it
+                Check(!e.Events.Any(x => x.Text.StartsWith("Next song")), "no 'next song' for the same song: " + string.Join(" | ", e.Events.Select(x => x.Text)));
+                Check(obs.Calls.Count == 1, "muted once: " + string.Join("; ", obs.Calls));
+            });
+
             Test("Old settings files with a single app still load", () =>
             {
                 File.WriteAllText(Paths.File("settings.json"), "{\"channels\":[{\"input\":\"Music\",\"enabled\":true,\"app\":\"spotify\",\"action\":\"Mute\"}]}");

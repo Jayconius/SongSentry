@@ -27,6 +27,18 @@ even under loud game sound**.
 
 It's free, it's a single ~220 KB exe with nothing to install, and it runs quietly in your tray.
 
+### Made for every kind of streamer
+
+| | |
+|---|---|
+| 🎮 **Game streamers** | Licensed songs in game radios, emotes, lobbies and events are muted on stream while your game sound stays on. |
+| 🦊 **VTubers** | Karaoke breaks, BGM and music in your model or overlay setup get protected. SongSentry doesn't touch your avatar or scenes, only the audio sources you choose. |
+| 🚶 **IRL streamers** | Music from the laptop or phone mix feeding OBS, and background songs from your music app, get caught and muted on stream. |
+| 🎙️ **Show hosts & podcasters** | Intros, bumpers and "let's listen to this" moments: play music for yourself while it's kept off the broadcast. |
+| 🎧 **Just Chatting, art & music creators** | Background playlists on Spotify, YouTube Music or a browser, with one click to mark your own or stream-safe music as safe. |
+
+If it goes through OBS, SongSentry can guard it.
+
 > [!IMPORTANT]
 > **Beta.** SongSentry **reduces** the risk of DMCA mutes and strikes; it can't guarantee zero. Nobody outside Twitch
 > and YouTube can see their private copyright databases, and no recognizer knows every song (brand-new releases,
@@ -161,7 +173,7 @@ They're optional. Now Playing and the song memory work without them.
 <details><summary><b>Does it use a lot of CPU?</b></summary>
 
 No. Capturing audio costs almost nothing, and a song-memory check takes about 7 ms every 2 seconds per source.
-In testing the whole app used about 1.3 % of one core while listening to a playing song.
+In testing the whole app used about 1.7 % of one CPU core and ~40 MB of RAM while protecting, listening to and learning a playing song.
 </details>
 
 <details><summary><b>How do I uninstall it?</b></summary>

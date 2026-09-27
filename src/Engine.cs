@@ -572,7 +572,7 @@ namespace SongSentry
                 if (risky)
                 {
                     r.ClearSince = null;
-                    string key = m.Key;
+                    string key = SongKey(m);   // artist + title: the same song from Now Playing and from the audio is one song
                     if (r.OverriddenKey == key)
                     {
                         r.Status = ChannelStatus.Overridden; r.Detail = "Left alone: you changed it by hand during this song";
@@ -595,7 +595,7 @@ namespace SongSentry
                     MediaInfo held = null;
                     if (r.Active && settings.Restore == RestoreMode.TrackEnd && r.SongKey != null)
                     {
-                        held = media.FirstOrDefault(x => x.Key == r.SongKey && x.State == PlayState.Paused && !settings.IsAllowed(x.Artist, x.Title));
+                        held = media.FirstOrDefault(x => SongKey(x) == r.SongKey && x.State == PlayState.Paused && !settings.IsAllowed(x.Artist, x.Title));
                         TimeSpan? left = held != null ? held.Remaining(now) : null;
                         if (left.HasValue && left.Value.TotalSeconds < 1.5) held = null;   // paused at the very end = over
                     }
@@ -692,7 +692,7 @@ namespace SongSentry
 
         void Apply(Channel c, Run r, InputInfo i, MediaInfo m)
         {
-            r.Active = true; r.Applied = c.Action; r.SongKey = m.Key; r.ClearSince = null;
+            r.Active = true; r.Applied = c.Action; r.SongKey = SongKey(m); r.ClearSince = null;
             r.TouchMute = r.TouchVolume = r.TouchTracks = false;
             r.OrigMuted = i.Muted; r.OrigVolume = i.VolumeMul; r.OrigTracks = new Dictionary<string, bool>(i.Tracks);
             try
@@ -800,6 +800,11 @@ namespace SongSentry
         static string Short(string action)
         {
             return action.Replace("Mute on stream", "muted on stream").Replace("Mute everywhere", "muted").Replace("Turn down", "turned down");
+        }
+
+        public static string SongKey(MediaInfo m)
+        {
+            return m == null ? null : ((m.Artist ?? "").Trim() + "|" + (m.Title ?? "").Trim()).ToLowerInvariant();
         }
 
         public static string SongText(MediaInfo m)
