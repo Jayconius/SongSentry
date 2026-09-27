@@ -117,7 +117,7 @@ namespace SongSentry
                 // column 3: action
                 Card(g, new RectangleF(940, 100, 300, 406), Theme.GMute, "Acts in OBS", "", fH, fB, fI, Theme.Coral);
                 string[] lines = { "Mute on stream only", "Mute everywhere", "Turn down", "Warn only", "",
-                                   "Your recording keeps the music; your allow list (artists, songs, labels) is never touched.", "", "Restores the source when the song is over." };
+                                   "Only risky songs: safe playlists, stream-safe lists and your allow list are left alone.", "", "Your recording keeps the music; the source comes back when the song is over." };
                 float ly = 176;
                 foreach (string l in lines)
                 {

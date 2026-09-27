@@ -1,6 +1,6 @@
 # SongSentry 1.1.0 Beta
 
-*Released 2026-09-27 · Windows 10 (2004+) / 11 · OBS 28+ · single exe, nothing to install*
+*Released 2026-09-28 · Windows 10 (2004+) / 11 · OBS 28+ · single exe, nothing to install*
 
 SongSentry keeps licensed music off your stream by recognizing songs in your OBS sources and muting them **on the
 stream only**, so your recording keeps the music. It's made for every kind of streamer: game streamers, **VTubers**,
@@ -28,9 +28,12 @@ IRL streamers, show hosts, podcasters and Just Chatting creators.
   - **Pear Desktop** (YouTube Music) in one click, through Pear's API Server plugin,
   - scanning the playlist that's playing in any player (about 2 s per song).
 
-  Playlists from links are checked for new songs each time SongSentry starts. No accounts or API keys needed.
+  Playlists keep their own name when it can be read, otherwise they become *My Playlist #1*, *#2*…; right-click a
+  playlist to rename it, see its songs or delete it. Playlists from links are checked for new songs each time
+  SongSentry starts. No accounts or API keys needed.
 - **Safe apps:** everything a chosen app plays (e.g. Pretzel) counts as safe.
-- Songs match across players even with "(feat. X)", "[Radio Edit]" or "- Remastered" in the title.
+- Songs match across players even with "(feat. X)", "[Radio Edit]" or "- Remastered" in the title, and YouTube
+  video titles like "Artist - Song (Official Video)" match the song.
 
 ### Recognition
 
@@ -46,7 +49,7 @@ IRL streamers, show hosts, podcasters and Just Chatting creators.
 - The same song from different services counts as one song ("Trouble" = "Trouble.").
 - **Fixes:** the music detector now works correctly on 8 kHz audio (it under-rated song intros), and fixed an audio
   device error that could happen depending on start-up order.
-- Bundles Chromaprint **fpcalc** (LGPL 2.1), so the exe is now ~4 MB. RAM is unchanged at **about 40–45 MB**. See
+- Bundles Chromaprint **fpcalc** (LGPL 2.1), so the exe is now ~4 MB. RAM is **about 40–50 MB**. See
   [THIRD_PARTY_NOTICES.md](https://github.com/Jayconius/SongSentry/blob/main/THIRD_PARTY_NOTICES.md).
 
 ## Everything in SongSentry
@@ -69,13 +72,16 @@ IRL streamers, show hosts, podcasters and Just Chatting creators.
 ### App
 - Channels with search, filters, sort and hidden sources; several apps per source; a warning for shared sources.
 - Allow list of artists, songs and **record labels**, plus "Mark as safe".
-- Tray, Pause protection, Start with Windows, auto-reconnect, no admin rights, and **~40–45 MB of RAM**.
+- Tray, Pause protection, Start with Windows, auto-reconnect, no admin rights, and **~40–50 MB of RAM**.
 
 ## Known limitations
 - AcoustID only recognizes a song from its start, and needs about 18 s of it. Songs joined mid-way need the song
   memory, AudioTag or AudD.
 - Audio recognition needs a few seconds; Now Playing sources are instant.
 - Browser and media-file sources inside OBS use Now Playing only.
+- Spotify playlist links only give the first 100 songs of public playlists; paste the copied songs for the rest.
+  Spotify rate-limits those lookups, so a big playlist can take several minutes (songs are remembered afterwards).
+- Private YouTube playlists can't be read from a link; play them in Pear Desktop or make them Unlisted.
 - The exe isn't code-signed, so Windows SmartScreen asks once (**More info → Run anyway**).
 
 ## Download

@@ -7,7 +7,7 @@
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20(2004%2B)%20%7C%2011-0B0E14?style=flat-square&logo=windows">
   <img alt="OBS 28+" src="https://img.shields.io/badge/OBS-28%2B%20(WebSocket%20v5)-0B0E14?style=flat-square&logo=obsstudio">
   <img alt="Single exe" src="https://img.shields.io/badge/install-none%20%C2%B7%20single%20exe-0B0E14?style=flat-square">
-  <img alt="RAM about 40 MB" src="https://img.shields.io/badge/RAM-~40%20MB-2DD4A7?style=flat-square">
+  <img alt="RAM about 40 to 50 MB" src="https://img.shields.io/badge/RAM-40--50%20MB-2DD4A7?style=flat-square">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-0B0E14?style=flat-square"></a>
 </p>
 
@@ -26,7 +26,7 @@ SongSentry also listens to the actual audio of each OBS source you protect, incl
 **learned into a local song memory**, so from then on it's recognized **offline, from the middle of the song,
 even under loud game sound**.
 
-It's free, it's a single ~4 MB exe with nothing to install, and it runs quietly in your tray using **about 40 MB of RAM**
+It's free, it's a single ~4 MB exe with nothing to install, and it runs quietly in your tray using **about 40–50 MB of RAM**
 (less than a single browser tab) and under 2 % of one CPU core, so it won't cost your stream or game any performance.
 
 ### Made for every kind of streamer
@@ -37,7 +37,7 @@ It's free, it's a single ~4 MB exe with nothing to install, and it runs quietly 
 | 🦊 **VTubers** | Karaoke breaks, BGM and music in your model or overlay setup get protected. SongSentry doesn't touch your avatar or scenes, only the audio sources you choose. |
 | 🚶 **IRL streamers** | Music from the laptop or phone mix feeding OBS, and background songs from your music app, get caught and muted on stream. |
 | 🎙️ **Show hosts & podcasters** | Intros, bumpers and "let's listen to this" moments: play music for yourself while it's kept off the broadcast. |
-| 🎧 **Just Chatting, art & music creators** | Background playlists on Spotify, YouTube Music or a browser, with one click to mark your own or stream-safe music as safe. |
+| 🎧 **Just Chatting, art & music creators** | Background playlists on Spotify, YouTube Music or a browser. Add your stream-safe playlists once and every song in them is left alone. |
 
 If it goes through OBS, SongSentry can guard it.
 
@@ -126,7 +126,7 @@ before, and why it gets better the more you stream.
 - 🌐 **Online fallbacks:** AcoustID (free, no key) → AudioTag → AudD (your own keys), each tried when the one before fails.
 - 🛡️ **Safe by design:** restores everything on quit, a crash journal puts sources back after a crash,
   "Pause protection" in the tray, and no admin rights needed.
-- 🪶 **Lightweight:** about **40 MB of RAM** and under 2 % of one CPU core while protecting, listening and learning.
+- 🪶 **Lightweight:** about **40–50 MB of RAM** and under 2 % of one CPU core while protecting, listening and learning.
   The song memory on disk is ~32 KB per minute of music.
 - 🪟 Tray app, starts with Windows (optional), reconnects to OBS by itself.
 
@@ -159,6 +159,8 @@ Everything runs on your PC. SongSentry sends:
   (can be turned off on the Recognition page)
 - **short audio clips (10–13 s) of unrecognized music** to AudioTag or AudD, **only if you add your own key**,
   at most one every 30 s per source.
+- **playlist links and copied song links** you add on the Playlists page, to Spotify or YouTube Music, to read the
+  songs in them (links are checked again when SongSentry starts). Pear Desktop is asked locally, on your PC.
 
 Nothing else leaves your PC: no accounts, no telemetry. Settings, keys (encrypted with Windows DPAPI), the song memory
 and a small log (passwords and tokens are removed from it) live in `%LocalAppData%\SongSentry`.
@@ -197,8 +199,8 @@ delete a playlist as a whole.
   plugin, and Pear asks you once.
 - **Any other player:** **Scan** presses "next" every ~2 seconds and saves each song until the playlist starts over.
 
-If SongSentry can't read a playlist's name, it asks you for one. You can also import a text or CSV file
-(for example an Exportify export).
+Playlists keep their own name when SongSentry can read it; otherwise they're saved as *My Playlist #1*, *#2*…
+Right-click a playlist to rename it. You can also import a text or CSV file (for example an Exportify export).
 </details>
 
 <details><summary><b>Windows says "Windows protected your PC".</b></summary>
@@ -231,7 +233,7 @@ hours of audio per month free, and AudD 300 requests. A key shared by everyone w
 <details><summary><b>Does it use a lot of RAM or CPU?</b></summary>
 
 No. Capturing audio costs almost nothing, and a song-memory check takes about 7 ms every 2 seconds per source.
-In testing the whole app used about 1.7 % of one CPU core and ~40 MB of RAM while protecting, listening to and learning a playing song.
+In testing the whole app used about 1.7 % of one CPU core and 40–50 MB of RAM while protecting, listening to and learning a playing song.
 </details>
 
 <details><summary><b>How do I uninstall it?</b></summary>
@@ -249,7 +251,7 @@ No SDK or Visual Studio needed. It uses the C# compiler that ships with Windows:
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-This runs the logic tests (59 checks against a fake OBS), renders the icon, screenshots and graphics, and builds
+This runs the logic tests (124 checks against a fake OBS), renders the icon, screenshots and graphics, and builds
 `dist\SongSentry.exe`.
 
 ## Roadmap
