@@ -1062,6 +1062,8 @@ namespace SongSentry
         void DrawPlaylistRow(Graphics g, SafeList l, RectangleF r, float clipTop, float clipBottom)
         {
             bool on = settings.Lists.Enabled.Contains(l.Id);
+            if (hover != null && PlaylistIdAt(hover) == l.Id) Theme.Fill(g, new RectangleF(r.X - 10, r.Y + 2, r.Width + 20, r.Height - 4), 8, Theme.A(Theme.Raised, 170));
+            if (r.Bottom > clipTop && r.Y < clipBottom) Hit("plrow:" + l.Id, new RectangleF(r.X - 10, Math.Max(r.Y, clipTop), r.Width + 20, Math.Min(r.Bottom, clipBottom) - Math.Max(r.Y, clipTop)));   // right-click anywhere on it
             using (var p = new Pen(Theme.Line)) g.DrawLine(p, r.X, r.Bottom - 0.5f, r.Right, r.Bottom - 0.5f);
             Theme.Text2(g, Theme.GList, fIconS, on ? Theme.Accent : Theme.Dim, new RectangleF(r.X, r.Y, 20, r.Height), StringAlignment.Center, StringAlignment.Center);
             Theme.Text2(g, l.Name, fBodyB, on ? Theme.Text : Theme.Sub, new RectangleF(r.X + 30, r.Y + 7, r.Width - 190, 20), StringAlignment.Near, StringAlignment.Center);
@@ -1128,7 +1130,7 @@ namespace SongSentry
         {
             if (scanner.Running) { scanner.Stop(); return; }
             if (scanApp == null) { ShowToast("Open your music player and start the playlist first"); return; }
-            string n = presetName ?? "", none = null;
+            string n = presetName ?? settings.Lists.NextAutoName("My Playlist"), none = null;
             if (!AskPlaylist("Scan the playlist that's playing",
                     "SongSentry will press \"next\" in " + AppKey.Pretty(scanApp) + " every couple of seconds and save each song, until the playlist starts over " +
                     "(about 2 s per song).\n\nStart your stream-safe playlist first with shuffle off, and mute the player if you like.",
@@ -1198,7 +1200,7 @@ namespace SongSentry
             if (!AskPlaylist("Add a safe playlist",
                     "Paste a Spotify, YouTube or YouTube Music playlist link.\n\nBig or private Spotify playlist? Links only share the first 100 songs. " +
                     "Open the playlist in the Spotify app, click a song, press Ctrl+A then Ctrl+C, and paste here.",
-                    true, ref text, ref name, "Name (optional: taken from the playlist when possible). Pick one to add the songs to it:", true)) return;
+                    true, ref text, ref name, "Name (optional). Empty = the playlist's own name, or \"My Playlist #1\". Pick one to add the songs to it:", true)) return;
             text = text.Trim();
             if (text.Length == 0) return;
             plBusy = true; plStatus = "Reading…"; Invalidate();
@@ -1226,8 +1228,8 @@ namespace SongSentry
                         else if (list != null && !list.Playlist)
                         {
                             // labels / artists: a stream-safe list rather than a playlist
-                            string n = name.Length > 0 ? name : list.Name ?? "", none = null;
-                            if (n.Length == 0 && (!AskPlaylist("Name this list", "What should this list be called?", false, ref none, ref n, "Name:", false) || n.Length == 0)) { plStatus = "Not saved."; return; }
+                            string n = name.Length > 0 ? name : list.Name ?? "";
+                            if (n.Length == 0) n = settings.Lists.NextAutoName("My List");
                             list.Name = n;
                             settings.Lists.AddParsed(list, url); settings.Save(); engine.Reevaluate();
                             plStatus = "Added \"" + n + "\": " + CountText(list) + "."; ShowToast(plStatus);
@@ -1248,24 +1250,29 @@ namespace SongSentry
         void SaveRead(PlaylistRead r, string name)
         {
             string n = !string.IsNullOrWhiteSpace(name) ? name.Trim() : r.Name;
-            if (string.IsNullOrWhiteSpace(n))
-            {
-                n = ""; string none = null;
-                if (!AskPlaylist("Name this playlist", "SongSentry couldn't read this playlist's name (" + r.Tracks.Count + " songs). What should it be called?",
-                                 false, ref none, ref n, "Name, or pick a playlist to add the songs to:", true) || n.Length == 0) { plStatus = "Not saved."; return; }
-            }
+            bool auto = string.IsNullOrWhiteSpace(n);
+            if (auto) n = settings.Lists.NextAutoName("My Playlist");   // no name from the source: "My Playlist #1", "#2"...
             int added;
             var l = settings.Lists.SavePlaylist(n, r.Source, r.Url, r.Tracks, r.Total, out added);
             settings.Save(); engine.Reevaluate();
             string msg = added == l.Tracks.Count ? "Saved \"" + l.Name + "\": " + CountText(l)
                                                  : "Added " + added + " new songs to \"" + l.Name + "\" (" + CountText(l) + ")";
             if (r.Failed > 0) msg += ". " + r.Failed + " couldn't be read";
-            plStatus = msg + "."; ShowToast(msg);
+            plStatus = msg + "." + (auto ? "  Right-click it to rename." : ""); ShowToast(msg);
             if (r.Source == "Spotify" && r.Total > r.Tracks.Count)
                 MessageBox.Show(this, "Spotify links only share the first " + r.Tracks.Count + " of this playlist's " + r.Total + " songs.\n\n" +
                                       "To add the rest: open the playlist in the Spotify app, click any song, press Ctrl+A then Ctrl+C. " +
                                       "Then click Add playlist… again, paste, and pick \"" + l.Name + "\" as the name so the songs join this playlist.",
                                 "Only part of the playlist", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        /// The playlist under a hit id (its row, switch, ••• or ×), or null.
+        string PlaylistIdAt(string hit)
+        {
+            if (hit == null) return null;
+            foreach (string p in new[] { "plrow:", "plmenu:", "pldel:", "list:" })
+                if (hit.StartsWith(p)) { string id = hit.Substring(p.Length); return settings.Lists.ById(id) != null ? id : null; }
+            return null;
         }
 
         void ShowPlaylistMenu(string id, Point at)
@@ -1519,7 +1526,7 @@ namespace SongSentry
             string h = HitTest(e.Location);
             if (h == hover) return;
             hover = h;
-            Cursor = h != null && !h.StartsWith("row:") && h != "scrolltrack" ? Cursors.Hand : Cursors.Default;
+            Cursor = h != null && !h.StartsWith("row:") && !h.StartsWith("plrow:") && h != "scrolltrack" ? Cursors.Hand : Cursors.Default;
             Invalidate();
         }
 
@@ -1573,6 +1580,12 @@ namespace SongSentry
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
+            if (e.Button == MouseButtons.Right)
+            {
+                string pid = PlaylistIdAt(HitTest(e.Location));
+                if (pid != null) ShowPlaylistMenu(pid, e.Location);
+                return;
+            }
             if (e.Button != MouseButtons.Left) return;
             if (suppressClick) { suppressClick = false; return; }   // this click ended a scrollbar drag
             string id = HitTest(e.Location);

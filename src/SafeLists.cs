@@ -69,6 +69,14 @@ namespace SongSentry
             lock (gate) return Imported.FirstOrDefault(l => string.Equals(l.Name, n, StringComparison.CurrentCultureIgnoreCase));
         }
 
+        /// "My Playlist #1", "#2"... the first number not taken yet.
+        public string NextAutoName(string prefix)
+        {
+            int n = 1;
+            while (ByName(prefix + " #" + n) != null) n++;
+            return prefix + " #" + n;
+        }
+
         static string NewId() { return "import:" + Guid.NewGuid().ToString("N").Substring(0, 8); }
 
         /// Saves songs as a named playlist, or adds them to the one with the same link or name. Returns the playlist;

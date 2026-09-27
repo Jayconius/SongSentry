@@ -428,6 +428,12 @@ namespace SongSentry
                 Check(lists.MatchTrack("Artist Two", "Song B") == null, "switched off: not safe");
                 lists.Enabled.Add(a.Id); lists.Remove(a.Id);
                 Check(lists.MatchTrack("Artist Two", "Song B") == null && lists.Mine.Count == 0, "deleted with all its songs");
+                Check(lists.NextAutoName("My Playlist") == "My Playlist #1", "first auto name");
+                lists.SavePlaylist(lists.NextAutoName("My Playlist"), "Pasted", null, new[] { "P - Q" }, 0, out added);
+                lists.SavePlaylist(lists.NextAutoName("My Playlist"), "Pasted", null, new[] { "R - S" }, 0, out added);
+                Check(lists.ByName("My Playlist #2") != null && lists.NextAutoName("My Playlist") == "My Playlist #3", "auto names count up");
+                lists.Remove(lists.ByName("My Playlist #1").Id);
+                Check(lists.NextAutoName("My Playlist") == "My Playlist #1", "a deleted number is reused");
                 lists.SavePlaylist("Videos", "YouTube Music", null, new[] { "Some Artist - Some Song" }, 0, out added);
                 Check(lists.MatchTrack("Random Channel", "Some Artist - Some Song (Official Video)") == "Videos", "video title 'Artist - Song' matches");
             });
