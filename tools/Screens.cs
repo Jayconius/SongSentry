@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace SongSentry
@@ -32,6 +33,22 @@ namespace SongSentry
             var settings = new Settings { Restore = RestoreMode.TrackEnd, AutoSkip = true, RiskIndependent = RiskAction.Warn };
             settings.Lists.FromJson(null);
             settings.Lists.Enabled.Add("epidemic");
+            var fakeLists = new[]
+            {
+                new object[] { "Late Night Synthwave", "Spotify", "https://open.spotify.com/playlist/0000000000000000000000", 100, 142, 1 },
+                new object[] { "Chill Stream Mix", "YouTube Music", "https://music.youtube.com/playlist?list=PL0000000000", 64, 64, 3 },
+                new object[] { "Boss Fight Hype", "Pear Desktop", null, 23, 23, 6 },
+                new object[] { "Retro Arcade", "Scan · Spotify", null, 18, 18, 9 },
+                new object[] { "Cozy Morning Lo-fi", "Pasted", null, 212, 212, 14 },
+            };
+            foreach (var fl in fakeLists)
+            {
+                int added;
+                var songsIn = Enumerable.Range(1, (int)fl[3]).Select(i => "Made-up Artist " + i + " - " + fl[0] + " " + i);
+                var l = settings.Lists.SavePlaylist((string)fl[0], (string)fl[1], (string)fl[2], songsIn, (int)fl[4], out added);
+                l.Added = DateTime.Now.AddDays(-(int)fl[5]);
+            }
+            settings.Lists.Enabled.Remove(settings.Lists.ByName("Retro Arcade").Id);
             settings.Allow.Add("app:pretzel");
             settings.Channels.Add(new Channel { Input = "Music", Enabled = true, App = "spotify", Action = ActionKind.StreamOnly });
             settings.Channels.Add(new Channel { Input = "Game Audio", Enabled = true, Action = ActionKind.StreamOnly });
@@ -72,7 +89,7 @@ namespace SongSentry
             var obs = new ObsConnection();
             obs.SetPreviewState(ObsState.Connected, "5.7.4");
             var form = new MainForm(settings, engine, obs, new NowPlayingWatcher(), new Recognizer(settings, engine, lib));
-            foreach (Page p in new[] { Page.Live, Page.Channels, Page.Recognition, Page.SafeMusic, Page.Settings })
+            foreach (Page p in new[] { Page.Live, Page.Channels, Page.Recognition, Page.SafeMusic, Page.Playlists, Page.Settings })
             {
                 form.CurrentPage = p;
                 using (var bmp = new Bitmap((int)MainForm.W * 2, (int)MainForm.H * 2))

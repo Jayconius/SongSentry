@@ -405,6 +405,69 @@ namespace SongSentry
                 Check(sc.Status.Contains("looped"), sc.Status);
             });
 
+            Test("Named playlists: saved, merged by name or link, renamed, saved to settings and deleted as a whole", () =>
+            {
+                var lists = new SafeLists(); lists.FromJson(null);
+                int added;
+                var a = lists.SavePlaylist("Stream Bangers", "Spotify", "https://open.spotify.com/playlist/AAAAAAAAAAAAAAAAAAAAAA",
+                                           new[] { "Artist One - Song A", "Artist Two - Song B" }, 150, out added);
+                Check(added == 2 && lists.Enabled.Contains(a.Id) && a.Playlist && a.Total == 150, "saved, on, 2 of 150");
+                Check(lists.MatchTrack("Artist One", "Song A (Radio Edit)") == "Stream Bangers", "matches loosely");
+                var b = lists.SavePlaylist("stream bangers", "Pasted", null, new[] { "Artist One - Song A", "Artist Three - Song C" }, 0, out added);
+                Check(b == a && added == 1 && a.Tracks.Count == 3, "same name (any case) adds to it, skipping duplicates: " + added);
+                Check(lists.MatchTrack("Artist Three", "Song C") == "Stream Bangers", "index sees added songs");
+                var c = lists.SavePlaylist("Other name", "Spotify", "https://open.spotify.com/playlist/AAAAAAAAAAAAAAAAAAAAAA", new[] { "X - Y" }, 0, out added);
+                Check(c == a && a.Tracks.Count == 4, "same link adds to it");
+                lists.Rename(a.Id, "Bangers");
+                Check(lists.MatchTrack("Artist Two", "Song B") == "Bangers", "renamed");
+                var back = new SafeLists(); back.FromJson(Json.Read(Json.Write(lists.ToJson())));
+                var r = back.ById(a.Id);
+                Check(r != null && r.Name == "Bangers" && r.Tracks.Count == 4 && r.Playlist && r.Source == "Spotify" && r.Total == 150
+                      && r.Added.Date == DateTime.Now.Date && back.Enabled.Contains(a.Id), "saved to settings and back");
+                lists.Enabled.Remove(a.Id);
+                Check(lists.MatchTrack("Artist Two", "Song B") == null, "switched off: not safe");
+                lists.Enabled.Add(a.Id); lists.Remove(a.Id);
+                Check(lists.MatchTrack("Artist Two", "Song B") == null && lists.Mine.Count == 0, "deleted with all its songs");
+                lists.SavePlaylist("Videos", "YouTube Music", null, new[] { "Some Artist - Some Song" }, 0, out added);
+                Check(lists.MatchTrack("Random Channel", "Some Artist - Some Song (Official Video)") == "Videos", "video title 'Artist - Song' matches");
+            });
+
+            Test("Playlist links: recognised, and Spotify / YouTube Music pages parsed", () =>
+            {
+                Check(PlaylistLinks.IsPlaylistLink("https://open.spotify.com/playlist/1a2B3c4D5e6F7g8H9i0J1k?si=0000"), "spotify link");
+                Check(PlaylistLinks.IsPlaylistLink("https://open.spotify.com/intl-de/album/1a2B3c4D5e6F7g8H9i0J1k"), "spotify album");
+                Check(PlaylistLinks.IsPlaylistLink("https://music.youtube.com/playlist?list=PL0123456789abcdefABCDEF_-xyzXYZ"), "ytm link");
+                Check(PlaylistLinks.IsPlaylistLink("https://www.youtube.com/watch?v=abc&list=PL0123456789abcdefABCDEF_-xyzXYZ&index=2"), "watch link with list");
+                Check(!PlaylistLinks.IsPlaylistLink("https://example.com/list.txt") && !PlaylistLinks.Recognizes("Artist - Song"), "other text");
+                Check(PlaylistLinks.Recognizes("https://open.spotify.com/track/0000000000000000000001\r\nhttps://open.spotify.com/track/0000000000000000000002"), "copied Spotify songs");
+                var e = PlaylistLinks.SpotifyEntity("<html><script id=\"__NEXT_DATA__\" type=\"application/json\">{\"props\":{\"pageProps\":{\"state\":{\"data\":{\"entity\":" +
+                                                   "{\"name\":\"My List\",\"trackList\":[{\"title\":\"Song A\",\"subtitle\":\"Artist One\"}]}}}}}}</script></html>");
+                Check(e != null && Json.Str(e, "name") == "My List", "spotify embed data");
+                string json = "{\"header\":{\"musicResponsiveHeaderRenderer\":{\"title\":{\"runs\":[{\"text\":\"Hard Mix\"}]},\"secondSubtitle\":{\"runs\":[{\"text\":\"1.2K views \u2022 835 tracks\"}]}}}," +
+                    "\"items\":[{\"musicResponsiveListItemRenderer\":{\"flexColumns\":[{\"musicResponsiveListItemFlexColumnRenderer\":{\"text\":{\"runs\":[{\"text\":\"Into Ecstasy\"}]}}}," +
+                    "{\"musicResponsiveListItemFlexColumnRenderer\":{\"text\":{\"runs\":[{\"text\":\"Hard Driver\"}]}}}]}}," +
+                    "{\"musicResponsiveListItemRenderer\":{\"x\":\"MUSIC_VIDEO_TYPE_UGC\",\"flexColumns\":[{\"musicResponsiveListItemFlexColumnRenderer\":{\"text\":{\"runs\":[{\"text\":\"Coone - Faces (Official Video)\"}]}}}," +
+                    "{\"musicResponsiveListItemFlexColumnRenderer\":{\"text\":{\"runs\":[{\"text\":\"Some Channel \u2022 2M views\"}]}}}]}}]}";
+                var r = new PlaylistRead();
+                PlaylistLinks.ParseYouTube(new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(json), r);
+                Check(r.Name == "Hard Mix" && r.Total == 835, "name and count: " + r.Name + " " + r.Total);
+                Check(r.Tracks.Count == 2 && r.Tracks[0] == "Hard Driver - Into Ecstasy" && r.Tracks[1] == "Coone - Faces (Official Video)", string.Join(" | ", r.Tracks));
+            });
+
+            Test("Playlist scan into a saved playlist: skips songs it has, stops when it reaches them again", () =>
+            {
+                var songs = new[] { "A", "B", "C", "D", "E" };
+                int idx = 0; var allowed = new List<string>();
+                Func<List<MediaInfo>> snap = () => new List<MediaInfo> { new MediaInfo { Aumid = "Spotify.exe", App = "spotify", Artist = "Artist", Title = songs[idx % songs.Length], State = PlayState.Playing } };
+                var known = new HashSet<string>(new[] { "Artist - C", "Artist - D", "Artist - E" }.Select(SafeLists.Key));
+                var sc = new PlaylistScanner(snap, aumid => { idx++; return true; }, e2 => allowed.Add(e2)) { StepMs = 0, WaitMs = 500, Known = known };
+                sc.Run("spotify");
+                Check(allowed.Count == 2 && allowed[1] == "track:Artist - B" && sc.Status.Contains("already saved"), "from A: " + string.Join(" | ", allowed) + " / " + sc.Status);
+                idx = 2; allowed.Clear();
+                sc.Run("spotify");
+                Check(allowed.Count == 2 && allowed[0] == "track:Artist - A" && sc.Status.Contains("looped"), "from C: " + string.Join(" | ", allowed) + " / " + sc.Status);
+            });
+
             Test("Risk levels choose the action: major protects, indie can warn, ignored stays alone", () =>
             {
                 var obs = new FakeObs(); obs.Add("Music", "x", false, 1, true);

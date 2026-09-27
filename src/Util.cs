@@ -84,7 +84,7 @@ namespace SongSentry
 
         public static IEnumerable<Dictionary<string, object>> Objs(object o)
         {
-            var list = o as ArrayList;
+            var list = o as IList;   // ArrayList (Json.Read) or object[] (DeserializeObject)
             if (list == null) yield break;
             foreach (object x in list)
             {

@@ -53,8 +53,8 @@ If it goes through OBS, SongSentry can guard it.
 | <img src="docs/screen-live.png" alt="Live page: protecting your stream" width="100%"> | <img src="docs/screen-channels.png" alt="Channels page: pick the OBS sources to protect" width="100%"> |
 | **Recognition** | **Safe music** |
 | <img src="docs/screen-recognition.png" alt="Recognition page: song memory and online fallbacks" width="100%"> | <img src="docs/screen-safemusic.png" alt="Safe music page: risk levels, stream-safe lists, playlists, safe apps" width="100%"> |
-| **Settings** | |
-| <img src="docs/screen-settings.png" alt="Settings page" width="100%"> | |
+| **Playlists** | **Settings** |
+| <img src="docs/screen-playlists.png" alt="Playlists page: named safe playlists from Spotify, YouTube, Pear Desktop or a scan" width="100%"> | <img src="docs/screen-settings.png" alt="Settings page" width="100%"> |
 
 <sub>Screenshots use made-up sources and songs.</sub>
 
@@ -114,11 +114,12 @@ before, and why it gets better the more you stream.
 - ⏱️ **Give the source back** after N seconds of quiet, or **when the track is over** (shows the time left).
 - 🏷️ **Risk levels:** major label / independent / unknown / stream-safe, from MusicBrainz label and owner data
   (e.g. *Republic Records → Universal*). Pick protect, warn only or ignore for each level.
-- 📚 **Stream-safe lists** built in (StreamBeats, NCS, FiXT), switches for libraries you pay for (Epidemic Sound,
-  Monstercat, Artlist, Soundstripe, Pretzel), and **import** your own list from a file or URL (text or CSV, such as a
-  Spotify playlist exported with Exportify).
-- 🎶 **Whitelist whole playlists:** *Scan a playlist* in any player (Spotify, YouTube Music, browsers) skips through it
-  and marks every song safe, and **Pear Desktop** (YouTube Music) queues are imported in one click.
+- 📚 **Stream-safe lists** built in (StreamBeats, NCS, FiXT), and switches for libraries you pay for (Epidemic Sound,
+  Monstercat, Artlist, Soundstripe, Pretzel). No login: the switch means "I have a license".
+- 🎶 **Safe playlists**, named and kept together, so you can switch off or delete a whole playlist at once. Add them by
+  pasting a **Spotify or YouTube / YouTube Music playlist link**, by pasting **songs copied from Spotify** (big or
+  private playlists, Liked Songs), from **Pear Desktop** in one click, or by scanning the playlist that's playing in
+  any player. Links are checked for new songs each time SongSentry starts. No accounts or API keys.
 - 🟢 **Safe apps:** everything a chosen app plays (e.g. Pretzel) counts as safe.
 - ✅ **Allow list** of artists, songs and **record labels** (e.g. `label: Epidemic Sound`). One-click **Mark as safe**.
 - 🧠 **Song memory**, offline and growing, ~32 KB per minute of music.
@@ -182,10 +183,20 @@ them too), and Creative Commons or stream-safe library music is fine. You set wh
 
 <details><summary><b>Can I whitelist my stream-safe playlist?</b></summary>
 
-Yes. Start the playlist and use **Scan a playlist**: SongSentry presses "next" every ~2 seconds and marks each song
-safe until the playlist starts over. It works with any player that shows up in Windows' media controls. In
-**Pear Desktop** (YouTube Music), **Allow my queue** reads the whole queue at once. It needs Pear's API Server
-plugin, and Pear asks you once. You can also import a Spotify playlist exported to CSV (for example with Exportify).
+Yes, on the **Playlists** page. Every song in a saved playlist counts as safe, and you can rename, switch off or
+delete a playlist as a whole.
+
+- **YouTube / YouTube Music:** paste the playlist's Share link. The whole playlist is read in seconds (public or
+  unlisted playlists).
+- **Spotify:** paste the playlist's Share link. Spotify only shares the first 100 songs of public playlists that way.
+  For bigger or private playlists (or Liked Songs), open the playlist in the Spotify app, click a song, press
+  **Ctrl+A** then **Ctrl+C**, and paste: every song is read, about a minute for 600 songs.
+- **Pear Desktop** (YouTube Music): play the playlist and click **Read Pear's playlist**. It needs Pear's API Server
+  plugin, and Pear asks you once.
+- **Any other player:** **Scan** presses "next" every ~2 seconds and saves each song until the playlist starts over.
+
+If SongSentry can't read a playlist's name, it asks you for one. You can also import a text or CSV file
+(for example an Exportify export).
 </details>
 
 <details><summary><b>Windows says "Windows protected your PC".</b></summary>

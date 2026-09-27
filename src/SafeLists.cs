@@ -15,6 +15,10 @@ namespace SongSentry
         public bool Paid;                 // needs a subscription/license: off by default, the streamer confirms they have it
         public bool Imported;
         public string Url;                // imported from here (refreshed on start); null for files / built-in
+        public bool Playlist;             // a named playlist the streamer added (link, copied songs, Pear, scan)
+        public string Source;             // "Spotify", "YouTube Music", "Pear Desktop", "Scan · Spotify", "File"...
+        public DateTime Added;
+        public int Total;                 // songs the source says it has (0 = unknown); above Tracks.Count when only part was readable
         public List<string> Labels = new List<string>(), Artists = new List<string>(), Tracks = new List<string>();
         public int Count { get { return Labels.Count + Artists.Count + Tracks.Count; } }
     }
@@ -54,6 +58,72 @@ namespace SongSentry
 
         IEnumerable<SafeList> Active { get { lock (gate) return BuiltIn.Concat(Imported).Where(l => Enabled.Contains(l.Id)).ToList(); } }
 
+        /// Every list/playlist the streamer added (not the built-in ones).
+        public List<SafeList> Mine { get { lock (gate) return Imported.ToList(); } }
+
+        public SafeList ById(string id) { lock (gate) return Imported.FirstOrDefault(l => l.Id == id); }
+
+        public SafeList ByName(string name)
+        {
+            string n = (name ?? "").Trim();
+            lock (gate) return Imported.FirstOrDefault(l => string.Equals(l.Name, n, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        static string NewId() { return "import:" + Guid.NewGuid().ToString("N").Substring(0, 8); }
+
+        /// Saves songs as a named playlist, or adds them to the one with the same link or name. Returns the playlist;
+        /// added = how many songs were new.
+        public SafeList SavePlaylist(string name, string source, string url, IEnumerable<string> tracks, int total, out int added)
+        {
+            lock (gate)
+            {
+                var l = (url != null ? Imported.FirstOrDefault(x => x.Url == url) : null) ?? ByName(name);
+                if (l == null)
+                {
+                    l = new SafeList { Id = NewId(), Name = name.Trim(), Imported = true, Playlist = true, Source = source, Url = url, Added = DateTime.Now };
+                    Imported.Add(l); Enabled.Add(l.Id);
+                }
+                if (l.Url == null) l.Url = url;
+                added = AddLocked(l, tracks);
+                l.Total = Math.Max(l.Total, total);
+                return l;
+            }
+        }
+
+        /// Adds songs ("Artist - Title") to a playlist, skipping ones it already has. Returns how many were new.
+        public int AddTracks(string id, IEnumerable<string> tracks)
+        {
+            lock (gate) { var l = Imported.FirstOrDefault(x => x.Id == id); return l == null ? 0 : AddLocked(l, tracks); }
+        }
+
+        static int AddLocked(SafeList l, IEnumerable<string> tracks)
+        {
+            var have = new HashSet<string>(l.Tracks.Select(Key));
+            var list = new List<string>(l.Tracks);
+            int n = 0;
+            foreach (string t in tracks)
+                if (!string.IsNullOrWhiteSpace(t) && have.Add(Key(t))) { list.Add(t.Trim()); n++; }
+            l.Tracks = list;   // a new list object, so the match index notices
+            return n;
+        }
+
+        public void Rename(string id, string name) { lock (gate) { var l = Imported.FirstOrDefault(x => x.Id == id); if (l != null) l.Name = name.Trim(); } }
+
+        /// "Artist - Title" -> artist, title (no " - " = title only).
+        public static void Split(string entry, out string artist, out string title)
+        {
+            int d = entry.IndexOf(" - ", StringComparison.Ordinal);
+            if (d > 0) { artist = entry.Substring(0, d); title = entry.Substring(d + 3); }
+            else { artist = ""; title = entry; }
+        }
+
+        /// Same-song key used for de-duplicating and by the playlist scanner.
+        public static string Key(string entry)
+        {
+            string a, t; Split(entry, out a, out t);
+            return TextNorm.Norm(a) + "|" + TextNorm.Norm(t);
+        }
+
         /// Name of the enabled list containing this label, or null. Matches "Monstercat" in "Monstercat Instinct".
         public string MatchLabel(string label)
         {
@@ -79,22 +149,63 @@ namespace SongSentry
             return null;
         }
 
+        /// Name of the enabled list/playlist containing this song, or null. Loose, like SongMatchText.Same. A YouTube
+        /// video title "Artist - Song (Official Video)" is also tried as artist + song.
         public string MatchTrack(string artist, string title)
         {
-            foreach (var l in Active)
-                foreach (string t in l.Tracks)
-                {
-                    int d = t.IndexOf(" - ", StringComparison.Ordinal);
-                    if (d > 0 && SongMatchText.Same(t.Substring(0, d), t.Substring(d + 3), artist, title)) return l.Name;
-                }
+            string hit = MatchOne(artist, title);
+            if (hit == null && title != null && title.Contains(" - "))
+            {
+                string a, t; Split(title, out a, out t);
+                hit = MatchOne(a, t);
+            }
+            return hit;
+        }
+
+        string MatchOne(string artist, string title)
+        {
+            string t = SongMatchText.Title(title);
+            if (t.Length == 0) return null;
+            List<KeyValuePair<string, string>> hits;
+            if (!Index().TryGetValue(t, out hits)) return null;
+            foreach (var h in hits)
+                if (string.IsNullOrWhiteSpace(h.Key) || string.IsNullOrWhiteSpace(artist) || TextNorm.Norm(h.Key) == TextNorm.Norm(artist)
+                    || SongMatchText.FirstArtist(h.Key) == SongMatchText.FirstArtist(artist)) return h.Value;
             return null;
+        }
+
+        // loose title -> (artist, list name); rebuilt when the enabled lists or their songs change
+        string indexSig;
+        Dictionary<string, List<KeyValuePair<string, string>>> index;
+
+        Dictionary<string, List<KeyValuePair<string, string>>> Index()
+        {
+            lock (gate)
+            {
+                var act = BuiltIn.Concat(Imported).Where(l => Enabled.Contains(l.Id)).ToList();
+                string sig = string.Join("|", act.Select(l => l.Id + ":" + l.Name + ":" + l.Tracks.Count + ":" + System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(l.Tracks)));
+                if (index != null && sig == indexSig) return index;
+                var d = new Dictionary<string, List<KeyValuePair<string, string>>>();
+                foreach (var l in act)
+                    foreach (string e in l.Tracks)
+                    {
+                        string a, t; Split(e, out a, out t);
+                        string k = SongMatchText.Title(t);
+                        if (k.Length == 0) continue;
+                        List<KeyValuePair<string, string>> v;
+                        if (!d.TryGetValue(k, out v)) d[k] = v = new List<KeyValuePair<string, string>>();
+                        v.Add(new KeyValuePair<string, string>(a, l.Name));
+                    }
+                indexSig = sig; index = d;
+                return d;
+            }
         }
 
         /// Parses a list: one entry per line: "label: X", "artist: Y", "Artist - Title", or CSV exports with
         /// "Track Name"/"Artist Name(s)" columns (Exportify, TuneMyMusic, Soundiiz...). "#" lines are comments.
         public static SafeList Parse(string text, string name)
         {
-            var l = new SafeList { Id = "import:" + Guid.NewGuid().ToString("N").Substring(0, 8), Name = name, Imported = true };
+            var l = new SafeList { Id = NewId(), Name = name, Imported = true, Added = DateTime.Now };
             var lines = text.Replace("\r", "").Split('\n');
             int ti = -1, ai = -1;
             if (lines.Length > 0 && lines[0].Contains(","))
@@ -118,6 +229,8 @@ namespace SongSentry
                 else if (s.Contains(" - ")) l.Tracks.Add(s);
                 else l.Artists.Add(s);
             }
+            l.Playlist = l.Labels.Count == 0 && l.Artists.Count == 0;   // only songs: it's a playlist
+            l.Total = l.Tracks.Count;
             return l;
         }
 
@@ -138,6 +251,7 @@ namespace SongSentry
         public SafeList ImportFile(string path)
         {
             var l = Parse(File.ReadAllText(path, Encoding.UTF8), Path.GetFileNameWithoutExtension(path));
+            l.Source = "File";
             Add(l);
             return l;
         }
@@ -145,8 +259,14 @@ namespace SongSentry
         /// Blocking download (call from a worker). Refreshable later via RefreshUrls.
         public SafeList ImportUrl(string url)
         {
-            var l = Parse(Download(url), new Uri(url).Segments.Last().Trim('/'));
+            return AddParsed(Parse(Download(url), new Uri(url).Segments.Last().Trim('/')), url);
+        }
+
+        /// Adds a list parsed elsewhere (pasted lines, a downloaded list); url = refresh it from there on start.
+        public SafeList AddParsed(SafeList l, string url)
+        {
             l.Url = url;
+            if (l.Source == null) l.Source = url != null ? "Link" : "Pasted";
             Add(l);
             return l;
         }
@@ -160,13 +280,20 @@ namespace SongSentry
             foreach (var l in Imported.Where(x => x.Url != null).ToList())
                 try
                 {
+                    if (PlaylistLinks.IsPlaylistLink(l.Url))
+                    {
+                        // a Spotify / YouTube playlist: add its new songs, keep the ones added by copy-paste or scanning
+                        var r = PlaylistLinks.Read(l.Url, null);
+                        lock (gate) { AddLocked(l, r.Tracks); l.Total = Math.Max(r.Total, l.Tracks.Count); }
+                        continue;
+                    }
                     var fresh = Parse(Download(l.Url), l.Name);
                     lock (gate) { l.Labels = fresh.Labels; l.Artists = fresh.Artists; l.Tracks = fresh.Tracks; }
                 }
                 catch (Exception e) { Log.Write("list refresh failed (" + l.Url + "): " + e.Message); }
         }
 
-        static string Download(string url)
+        public static string Download(string url)
         {
             ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072 | (SecurityProtocolType)12288;
             using (var wc = new WebClient { Encoding = Encoding.UTF8 })
@@ -182,7 +309,9 @@ namespace SongSentry
         {
             lock (gate)
                 return Json.Make("enabled", Enabled.ToList(),
-                    "imported", Imported.Select(l => Json.Make("id", l.Id, "name", l.Name, "url", l.Url, "labels", l.Labels, "artists", l.Artists, "tracks", l.Tracks)).ToList());
+                    "imported", Imported.Select(l => Json.Make("id", l.Id, "name", l.Name, "url", l.Url, "playlist", l.Playlist, "source", l.Source,
+                        "added", l.Added == DateTime.MinValue ? null : l.Added.ToString("o"), "total", l.Total,
+                        "labels", l.Labels, "artists", l.Artists, "tracks", l.Tracks)).ToList());
         }
 
         public void FromJson(Dictionary<string, object> d)
@@ -198,6 +327,9 @@ namespace SongSentry
                 {
                     var l = new SafeList { Id = Json.Str(x, "id"), Name = Json.Str(x, "name"), Url = Json.Str(x, "url"), Imported = true };
                     l.Labels = Strings(x, "labels"); l.Artists = Strings(x, "artists"); l.Tracks = Strings(x, "tracks");
+                    l.Playlist = Json.Bool(x, "playlist", false); l.Source = Json.Str(x, "source"); l.Total = (int)Json.Num(x, "total", 0);
+                    DateTime at;
+                    if (DateTime.TryParse(Json.Str(x, "added"), null, System.Globalization.DateTimeStyles.RoundtripKind, out at)) l.Added = at;
                     if (l.Id != null) Imported.Add(l);
                 }
             }

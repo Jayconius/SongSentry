@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 namespace SongSentry
 {
-    public enum Page { Live, Channels, Recognition, SafeMusic, Settings }
+    public enum Page { Live, Channels, Recognition, SafeMusic, Playlists, Settings }
 
     public sealed class MainForm : Form
     {
@@ -23,8 +23,8 @@ namespace SongSentry
         readonly NowPlayingWatcher nowPlaying;
         readonly Recognizer recognizer;
         readonly PlaylistScanner scanner;
-        string scanApp, pearStatus;
-        bool pearBusy;
+        string scanApp, plStatus, scanTarget;
+        bool plBusy;
         readonly List<KeyValuePair<string, RectangleF>> hits = new List<KeyValuePair<string, RectangleF>>();
         readonly Dictionary<string, float> knobs = new Dictionary<string, float>();
         readonly Font fBrand, fH1, fH2, fBody, fBodyB, fSmall, fTiny, fCaps, fIcon, fIconS, fIconL;
@@ -46,8 +46,8 @@ namespace SongSentry
         public MainForm(Settings settings, Engine engine, ObsConnection obs, NowPlayingWatcher nowPlaying, Recognizer recognizer)
         {
             this.settings = settings; this.engine = engine; this.obs = obs; this.nowPlaying = nowPlaying; this.recognizer = recognizer;
-            scanner = new PlaylistScanner(nowPlaying.Snapshot, nowPlaying.SkipNext, e => engine.AddAllow(e));
-            scanner.Changed += () => { if (!scanner.Running) engine.ScanningApp = null; QueueRepaint(); };
+            scanner = new PlaylistScanner(nowPlaying.Snapshot, nowPlaying.SkipNext, ScanFound);
+            scanner.Changed += () => { if (!scanner.Running) ScanFinished(); QueueRepaint(); };
             Text = "SongSentry";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
@@ -229,6 +229,7 @@ namespace SongSentry
             else if (page == Page.Channels) DrawChannels(g);
             else if (page == Page.Recognition) DrawRecognition(g);
             else if (page == Page.SafeMusic) DrawSafeMusic(g);
+            else if (page == Page.Playlists) DrawPlaylists(g);
             else DrawSettings(g);
             g.Restore(st);
             DrawToast(g);
@@ -250,7 +251,8 @@ namespace SongSentry
             NavItem(g, Page.Channels, Theme.GVolume, "Channels", 142);
             NavItem(g, Page.Recognition, Theme.GMusic, "Recognition", 188);
             NavItem(g, Page.SafeMusic, Theme.GCheck, "Safe music", 234);
-            NavItem(g, Page.Settings, Theme.GSettings, "Settings", 280);
+            NavItem(g, Page.Playlists, Theme.GList, "Playlists", 280);
+            NavItem(g, Page.Settings, Theme.GSettings, "Settings", 326);
 
             // OBS connection card
             var card = new RectangleF(14, H - 118, SideW - 28, 102);
@@ -324,6 +326,7 @@ namespace SongSentry
                 case Page.Channels: title = "Channels"; sub = "Pick the OBS sources to protect. Only switched-on sources are ever changed."; break;
                 case Page.Recognition: title = "Recognition"; sub = "How SongSentry recognises songs in your sources' audio."; break;
                 case Page.SafeMusic: title = "Safe music"; sub = "Which songs count as risky, and which are always fine to play."; break;
+                case Page.Playlists: title = "Safe playlists"; sub = "Every song in these playlists counts as safe. Add, name and delete whole playlists."; break;
                 default: title = "Settings"; sub = "OBS connection, your allow list, and behaviour."; break;
             }
             Theme.Text2(g, title, fH1, Theme.Text, new RectangleF(X0, 22, 400, 32), StringAlignment.Near, StringAlignment.Center);
@@ -584,21 +587,24 @@ namespace SongSentry
                 }
             }            g.Restore(st);
 
-            // scrollbar: drag the thumb, or click the track to jump a page
+            Scrollbar(g, W - 30, listTop, listBottom);
+        }
+
+        /// Scrollbar for a list scrolled by `scroll`/`scrollMax`: drag the thumb, or click the track to jump a page.
+        void Scrollbar(Graphics g, float x, float top, float bottom)
+        {
             trackRect = RectangleF.Empty;
-            if (scrollMax > 0)
-            {
-                trackRect = new RectangleF(W - 30, listTop, 14, listBottom - listTop);
-                float thumbH = Math.Max(40, trackRect.Height * trackRect.Height / (trackRect.Height + scrollMax));
-                float ty = listTop + (trackRect.Height - thumbH) * (scroll / scrollMax);
-                thumbRect = new RectangleF(trackRect.X, ty, trackRect.Width, thumbH);
-                bool hot = dragging || hover == "scrollthumb" || hover == "scrolltrack";
-                if (hot) Theme.Fill(g, new RectangleF(W - 25, listTop, 6, trackRect.Height), 3, Theme.A(Theme.Hover, 90));
-                float bw = hot ? 6 : 4;
-                Theme.Fill(g, new RectangleF(W - 22 - bw / 2 + (hot ? 0 : 1), ty, bw, thumbH), bw / 2, dragging ? Theme.Sub : hot ? Theme.Dim : Theme.Hover);
-                Hit("scrolltrack", trackRect);
-                Hit("scrollthumb", thumbRect);
-            }
+            if (scrollMax <= 0) return;
+            trackRect = new RectangleF(x, top, 14, bottom - top);
+            float thumbH = Math.Max(40, trackRect.Height * trackRect.Height / (trackRect.Height + scrollMax));
+            float ty = top + (trackRect.Height - thumbH) * (scroll / scrollMax);
+            thumbRect = new RectangleF(trackRect.X, ty, trackRect.Width, thumbH);
+            bool hot = dragging || hover == "scrollthumb" || hover == "scrolltrack";
+            if (hot) Theme.Fill(g, new RectangleF(x + 5, top, 6, trackRect.Height), 3, Theme.A(Theme.Hover, 90));
+            float bw = hot ? 6 : 4;
+            Theme.Fill(g, new RectangleF(x + 8 - bw / 2 + (hot ? 0 : 1), ty, bw, thumbH), bw / 2, dragging ? Theme.Sub : hot ? Theme.Dim : Theme.Hover);
+            Hit("scrolltrack", trackRect);
+            Hit("scrollthumb", thumbRect);
         }
 
         bool showHidden, dragging, suppressClick, sortByName;
@@ -954,51 +960,121 @@ namespace SongSentry
                 ay += 34;
             }
 
-            // stream-safe lists
+            // stream-safe lists (built in; the streamer's own lists and playlists are on the Playlists page)
             var sl = new RectangleF(rx, y, colW, 300);
             Section(g, sl, "STREAM-SAFE LISTS");
-            float iw = LinkText(g, "list:import", "Import…", sl.Right - 18, sl.Y + 13, true);
-            LinkText(g, "help:lists", "How it works", sl.Right - 18 - iw - 18, sl.Y + 13, true);
+            LinkText(g, "help:lists", "How it works", sl.Right - 18, sl.Y + 13, true);
             float sy = sl.Y + 36;
-            var all = settings.Lists.All.ToList();
-            int shown = 0;
-            foreach (var l in all)
+            foreach (var l in settings.Lists.BuiltIn)
             {
-                if (sy > sl.Bottom - 34) break;
-                shown++;
-                string name = l.Name + (l.Imported ? "  (" + l.Count + ")" : "");
-                Theme.Text2(g, name, fBody, Theme.Text, new RectangleF(sl.X + 18, sy, colW - 130, 18), StringAlignment.Near, StringAlignment.Center);
-                string note = l.Imported ? (l.Url != null ? "from a URL, refreshed on start" : "imported file") : l.Note;
-                Theme.Text2(g, (l.Paid ? "PAID  ·  " : "") + note, fTiny, l.Paid ? Theme.Amber : Theme.Dim, new RectangleF(sl.X + 18, sy + 17, colW - 130, 14), StringAlignment.Near, StringAlignment.Center);
-                if (l.Imported)
-                {
-                    var del = new RectangleF(sl.Right - 96, sy + 4, 22, 22);
-                    Theme.Text2(g, Theme.GCancel, fIconS, hover == "listdel:" + l.Id ? Theme.Coral : Theme.Dim, del, StringAlignment.Center, StringAlignment.Center);
-                    Hit("listdel:" + l.Id, del);
-                }
+                Theme.Text2(g, l.Name, fBody, Theme.Text, new RectangleF(sl.X + 18, sy, colW - 130, 18), StringAlignment.Near, StringAlignment.Center);
+                Theme.Text2(g, (l.Paid ? "PAID  ·  " : "") + l.Note, fTiny, l.Paid ? Theme.Amber : Theme.Dim, new RectangleF(sl.X + 18, sy + 17, colW - 130, 14), StringAlignment.Near, StringAlignment.Center);
                 Switch(g, "list:" + l.Id, sl.Right - 66, sy + 5, Theme.Accent);
                 sy += 31;
             }
-            if (shown < all.Count) Theme.Text2(g, "+ " + (all.Count - shown) + " more", fTiny, Theme.Dim, new RectangleF(sl.X + 18, sl.Bottom - 24, 100, 16), StringAlignment.Near, StringAlignment.Center);
 
-            // playlists
+            // the streamer's playlists (managed on the Playlists page)
             var pl = new RectangleF(rx, sl.Bottom + 16, colW, H - sl.Bottom - 32);
-            Section(g, pl, "PLAYLISTS  ·  MARK A WHOLE PLAYLIST SAFE");
-            LinkText(g, "help:playlists", "How it works", pl.Right - 18, pl.Y + 13, true);
-            Theme.Text2(g, "Scan the playlist that's playing", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 34, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
+            Section(g, pl, "YOUR SAFE PLAYLISTS");
+            var mine = settings.Lists.Mine;
+            float py = pl.Y + 38;
+            if (mine.Count == 0)
+                Theme.Wrap(g, "Add Spotify or YouTube playlists, Pear's playlist, or scan the one that's playing. Every song in them counts as safe.",
+                           fSmall, Theme.Sub, new RectangleF(pl.X + 18, py, colW - 36, 60));
+            foreach (var l in mine.OrderByDescending(x => x.Added).Take(3))
+            {
+                bool on = settings.Lists.Enabled.Contains(l.Id);
+                Theme.Text2(g, l.Name, fBody, on ? Theme.Text : Theme.Dim, new RectangleF(pl.X + 18, py, colW - 150, 22), StringAlignment.Near, StringAlignment.Center);
+                Theme.Text2(g, CountText(l), fTiny, Theme.Dim, new RectangleF(pl.Right - 150, py, 132, 22), StringAlignment.Far, StringAlignment.Center);
+                py += 26;
+            }
+            if (mine.Count > 3) Theme.Text2(g, "+ " + (mine.Count - 3) + " more", fTiny, Theme.Dim, new RectangleF(pl.X + 18, py, 120, 18), StringAlignment.Near, StringAlignment.Center);
+            Button(g, "nav:Playlists", mine.Count == 0 ? "Add a playlist" : "Manage playlists", pl.X + 18, pl.Bottom - 50, 0, mine.Count == 0);
+        }
+
+        static string CountText(SafeList l)
+        {
+            if (!l.Playlist && l.Labels.Count + l.Artists.Count > 0) return l.Count + (l.Count == 1 ? " entry" : " entries");
+            if (l.Total > l.Tracks.Count) return l.Tracks.Count + " of " + l.Total + " songs";
+            return l.Tracks.Count.ToString("N0") + (l.Tracks.Count == 1 ? " song" : " songs");
+        }
+
+        // ------------------------------------------------------------------ Playlists page
+
+        void DrawPlaylists(Graphics g)
+        {
+            float y = HeadH + 4;
+            var add = new RectangleF(X0, y, CW, 162);
+            Section(g, add, "ADD A SAFE PLAYLIST");
+            float hw = LinkText(g, "help:playlists", "How it works", add.Right - 18, add.Y + 13, true);
+            LinkText(g, "pl:file", "Import file…", add.Right - 18 - hw - 18, add.Y + 13, true);
+            float cw3 = (CW - 36 - 40) / 3f, cx = add.X + 18, top = add.Y + 38;
+
+            Theme.Text2(g, "Spotify or YouTube", fBodyB, Theme.Text, new RectangleF(cx, top, cw3, 20), StringAlignment.Near, StringAlignment.Center);
+            Theme.Wrap(g, "Paste a playlist link, or songs copied from Spotify.", fTiny, Theme.Dim, new RectangleF(cx, top + 22, cw3, 32));
+            Button(g, "pl:add", plBusy ? "Reading…" : "Add playlist…", cx, top + 58, 0, true);
+
+            cx += cw3 + 20;
+            Theme.Text2(g, "Pear Desktop", fBodyB, Theme.Text, new RectangleF(cx, top, cw3, 20), StringAlignment.Near, StringAlignment.Center);
+            Theme.Wrap(g, "Reads the playlist playing in Pear, all at once.", fTiny, Theme.Dim, new RectangleF(cx, top + 22, cw3, 32));
+            Button(g, "pear:go", "Read Pear's playlist", cx, top + 58, 0, false);
+
+            cx += cw3 + 20;
+            Theme.Text2(g, "Any player", fBodyB, Theme.Text, new RectangleF(cx, top, cw3, 20), StringAlignment.Near, StringAlignment.Center);
+            Theme.Wrap(g, "Plays through the playlist that's playing, ~2 s a song.", fTiny, Theme.Dim, new RectangleF(cx, top + 22, cw3, 32));
             if (scanApp == null) scanApp = engine.Media.Where(x => x.State == PlayState.Playing).Select(x => x.App).FirstOrDefault() ?? engine.Media.Select(x => x.App).FirstOrDefault();
-            var ap = new RectangleF(pl.X + 18, pl.Y + 60, 150, 30);
+            var ap = new RectangleF(cx, top + 59, cw3 - 84, 30);
             Theme.Fill(g, ap, 8, hover == "scan:app" ? Theme.Hover : Theme.Raised);
-            Theme.Text2(g, scanApp == null ? "No player open" : AppKey.Pretty(scanApp), fSmall, Theme.Text, new RectangleF(ap.X + 10, ap.Y, ap.Width - 30, ap.Height), StringAlignment.Near, StringAlignment.Center);
+            Theme.Text2(g, scanApp == null ? "No player" : AppKey.Pretty(scanApp), fSmall, Theme.Text, new RectangleF(ap.X + 10, ap.Y, ap.Width - 30, ap.Height), StringAlignment.Near, StringAlignment.Center);
             Theme.Text2(g, Theme.GChevron, fIconS, Theme.Dim, new RectangleF(ap.Right - 22, ap.Y + 1, 14, ap.Height), StringAlignment.Center, StringAlignment.Center);
             Hit("scan:app", ap);
-            Button(g, "scan:go", scanner.Running ? "Stop" : "Scan", ap.Right + 10, ap.Y - 1, 84, !scanner.Running);
-            Theme.Wrap(g, string.IsNullOrEmpty(scanner.Status) ? "Plays through it: skips a song every ~2 s and marks each one safe. Start the playlist in your player first."
-                       : scanner.Status, fTiny, scanner.Running ? Theme.Accent : Theme.Dim, new RectangleF(pl.X + 18, pl.Y + 96, colW - 36, 30));
-            Theme.Text2(g, "Pear Desktop (YouTube Music): no skipping", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 130, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
-            float pbx = Button(g, "pear:go", pearBusy ? "Waiting…" : "Mark its playlist safe", pl.X + 18, pl.Y + 154, 0, false);
-            Theme.Wrap(g, pearStatus ?? "Play the playlist in Pear, then click. Reads it all at once.",
-                       fTiny, pearStatus != null ? Theme.Sub : Theme.Dim, new RectangleF(pbx + 12, pl.Y + 152, pl.Right - pbx - 30, 44));
+            Button(g, "scan:go", scanner.Running ? "Stop" : "Scan", ap.Right + 8, top + 58, 76, false);
+
+            string st = scanner.Running ? scanner.Status : plStatus;
+            if (!string.IsNullOrEmpty(st))
+                Theme.Text2(g, st, fTiny, scanner.Running || plBusy ? Theme.Accent : Theme.Sub, new RectangleF(add.X + 18, add.Bottom - 26, CW - 36, 16), StringAlignment.Near, StringAlignment.Center);
+
+            var ls = new RectangleF(X0, add.Bottom + 16, CW, H - add.Bottom - 32);
+            Section(g, ls, "YOUR SAFE PLAYLISTS");
+            var mine = settings.Lists.Mine.OrderByDescending(x => x.Added).ToList();
+            int songs = mine.Sum(l => l.Count);
+            Theme.Text2(g, mine.Count + (mine.Count == 1 ? " playlist" : " playlists") + "  ·  " + songs.ToString("N0") + " songs", fSmall, Theme.Sub,
+                        new RectangleF(ls.Right - 318, ls.Y + 10, 300, 22), StringAlignment.Far, StringAlignment.Center);
+            float listTop = ls.Y + 40, listBottom = ls.Bottom - 8;
+            const float rowH = 52;
+            scrollMax = Math.Max(0, mine.Count * rowH - (listBottom - listTop));
+            scroll = Math.Max(0, Math.Min(scroll, scrollMax));
+            if (mine.Count == 0)
+                Theme.Text2(g, "No playlists yet. Add one above: every song in it will count as safe.", fBody, Theme.Sub,
+                            new RectangleF(ls.X, listTop + 40, ls.Width, 24), StringAlignment.Center, StringAlignment.Center);
+            var saved = g.Save();
+            g.SetClip(new RectangleF(ls.X + 1, listTop, ls.Width - 2, listBottom - listTop), CombineMode.Intersect);
+            float ry = listTop - scroll;
+            foreach (var l in mine)
+            {
+                if (ry + rowH >= listTop && ry <= listBottom) DrawPlaylistRow(g, l, new RectangleF(ls.X + 18, ry, ls.Width - 52, rowH), listTop, listBottom);
+                ry += rowH;
+            }
+            g.Restore(saved);
+            Scrollbar(g, ls.Right - 24, listTop, listBottom);
+        }
+
+        void DrawPlaylistRow(Graphics g, SafeList l, RectangleF r, float clipTop, float clipBottom)
+        {
+            bool on = settings.Lists.Enabled.Contains(l.Id);
+            using (var p = new Pen(Theme.Line)) g.DrawLine(p, r.X, r.Bottom - 0.5f, r.Right, r.Bottom - 0.5f);
+            Theme.Text2(g, Theme.GList, fIconS, on ? Theme.Accent : Theme.Dim, new RectangleF(r.X, r.Y, 20, r.Height), StringAlignment.Center, StringAlignment.Center);
+            Theme.Text2(g, l.Name, fBodyB, on ? Theme.Text : Theme.Sub, new RectangleF(r.X + 30, r.Y + 7, r.Width - 190, 20), StringAlignment.Near, StringAlignment.Center);
+            string meta = CountText(l) + (l.Source != null ? "  ·  " + l.Source : "") + (l.Added != DateTime.MinValue ? "  ·  added " + l.Added.ToString("d MMM") : "")
+                        + (l.Url != null ? "  ·  updates on start" : "");
+            Theme.Text2(g, meta, fTiny, l.Total > l.Tracks.Count ? Theme.Amber : Theme.Dim, new RectangleF(r.X + 30, r.Y + 27, r.Width - 190, 16), StringAlignment.Near, StringAlignment.Center);
+            Switch(g, "list:" + l.Id, r.Right - 128, r.Y + 14, Theme.Accent, clipTop, clipBottom);
+            var more = new RectangleF(r.Right - 70, r.Y + 12, 28, 28);
+            var del = new RectangleF(r.Right - 34, r.Y + 12, 28, 28);
+            if (hover == "plmenu:" + l.Id) Theme.Fill(g, more, 7, Theme.Hover);
+            Theme.Text2(g, "•••", fSmall, Theme.Sub, more, StringAlignment.Center, StringAlignment.Center);
+            Theme.Text2(g, Theme.GCancel, fIconS, hover == "pldel:" + l.Id ? Theme.Coral : Theme.Dim, del, StringAlignment.Center, StringAlignment.Center);
+            if (more.Bottom > clipTop && more.Y < clipBottom) { Hit("plmenu:" + l.Id, more); Hit("pldel:" + l.Id, del); }
         }
 
         void ShowRiskMenu(RiskLevel level, Point at)
@@ -1020,33 +1096,18 @@ namespace SongSentry
             m.Show(this, at);
         }
 
-        void ShowImportMenu(Point at)
+        void ImportFile()
         {
-            var m = NewMenu();
-            Add(m, "From a file…  (.txt or .csv, e.g. an Exportify playlist export)", false, () =>
+            using (var d = new OpenFileDialog { Filter = "Song lists (*.txt;*.csv)|*.txt;*.csv|All files|*.*", Title = "Import a playlist or stream-safe list" })
             {
-                using (var d = new OpenFileDialog { Filter = "Song lists (*.txt;*.csv)|*.txt;*.csv|All files|*.*", Title = "Import a stream-safe list" })
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                try
                 {
-                    if (d.ShowDialog(this) != DialogResult.OK) return;
-                    try { var l = settings.Lists.ImportFile(d.FileName); settings.Save(); engine.Reevaluate(); ShowToast("Imported " + l.Count + " entries from " + l.Name); }
-                    catch (Exception ex) { ShowToast("Couldn't import: " + ex.Message); }
+                    var l = settings.Lists.ImportFile(d.FileName); settings.Save(); engine.Reevaluate();
+                    plStatus = "Imported \"" + l.Name + "\": " + CountText(l) + "."; ShowToast(plStatus);
                 }
-            });
-            Add(m, "From a URL…  (a list someone shares; refreshed on start)", false, () =>
-            {
-                string url = Microsoft.VisualBasic.Interaction.InputBox("Paste the address of a stream-safe list (plain text or CSV).\n\nOne entry per line: \"label: Name\", \"artist: Name\" or \"Artist - Title\".",
-                                                                          "Import a stream-safe list", "https://");
-                if (string.IsNullOrWhiteSpace(url) || url == "https://") return;
-                ShowToast("Downloading the list…");
-                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-                {
-                    string msg;
-                    try { var l = settings.Lists.ImportUrl(url.Trim()); settings.Save(); engine.Reevaluate(); msg = "Imported " + l.Count + " entries from " + l.Name; }
-                    catch (Exception ex) { msg = "Couldn't import: " + ex.Message; }
-                    try { BeginInvoke((Action)(() => ShowToast(msg))); } catch { }
-                });
-            });
-            m.Show(this, at);
+                catch (Exception ex) { ShowToast("Couldn't import: " + ex.Message); }
+            }
         }
 
         void ShowHelp(string title, string text)
@@ -1063,38 +1124,258 @@ namespace SongSentry
             m.Show(this, at);
         }
 
-        void StartOrStopScan()
+        void StartOrStopScan(string presetName)
         {
             if (scanner.Running) { scanner.Stop(); return; }
             if (scanApp == null) { ShowToast("Open your music player and start the playlist first"); return; }
-            if (MessageBox.Show(this, "SongSentry will press \"next\" in " + AppKey.Pretty(scanApp) + " every couple of seconds and mark each song as safe, " +
-                                      "until the playlist starts over.\n\nStart your stream-safe playlist first, and mute the player if you like. " +
-                                      "Only scan playlists you know are safe to play on stream.", "Scan a playlist",
-                                MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
+            string n = presetName ?? "", none = null;
+            if (!AskPlaylist("Scan the playlist that's playing",
+                    "SongSentry will press \"next\" in " + AppKey.Pretty(scanApp) + " every couple of seconds and save each song, until the playlist starts over " +
+                    "(about 2 s per song).\n\nStart your stream-safe playlist first with shuffle off, and mute the player if you like.",
+                    false, ref none, ref n, "Save the songs as (a new name, or pick a playlist to add to):", true) || n.Length == 0) return;
+            int added;
+            var l = settings.Lists.SavePlaylist(n, "Scan · " + AppKey.Pretty(scanApp), null, new string[0], 0, out added);
+            scanTarget = l.Id;
+            scanner.Known = l.Tracks.Count > 0 ? new HashSet<string>(l.Tracks.Select(SafeLists.Key)) : null;
             engine.ScanningApp = scanApp;
             scanner.Start(scanApp);
             Invalidate();
         }
 
-        void AllowPearQueue()
+        void ScanFound(string entry)
         {
-            if (pearBusy) return;
-            pearBusy = true; pearStatus = "Asking Pear Desktop… if Pear shows a message, click Allow."; Invalidate();
+            string id = scanTarget;
+            if (id == null) return;
+            settings.Lists.AddTracks(id, new[] { entry.StartsWith("track:") ? entry.Substring(6) : entry });
+            engine.Reevaluate();
+        }
+
+        void ScanFinished()
+        {
+            engine.ScanningApp = null;
+            var l = scanTarget != null ? settings.Lists.ById(scanTarget) : null;
+            if (l != null && l.Tracks.Count == 0) settings.Lists.Remove(l.Id);   // nothing found: don't keep an empty playlist
+            plStatus = scanner.Status + (l != null && l.Tracks.Count > 0 ? "  Saved in \"" + l.Name + "\" (" + CountText(l) + ")." : "");
+            scanTarget = null;
+            settings.Save();
+            engine.Reevaluate();
+        }
+
+        void ReadPear()
+        {
+            if (plBusy) return;
+            plBusy = true; plStatus = "Asking Pear Desktop… if Pear shows a message, click Allow."; Invalidate();
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                PlaylistRead r = null; string err = null;
+                try
+                {
+                    string token = settings.PearToken, pid;
+                    var songs = PearDesktop.Queue(settings.PearPort, ref token, out pid);
+                    settings.PearToken = token; settings.Save();
+                    if (songs.Count == 0) throw new InvalidOperationException("Pear's queue is empty. Play the playlist in Pear first.");
+                    r = new PlaylistRead { Source = "Pear Desktop", Tracks = songs, Total = songs.Count };
+                    if (pid != null && !pid.StartsWith("RD"))
+                        try
+                        {
+                            // Pear said which playlist this is: take its name (and any songs past the queue) from YouTube Music
+                            var yt = PlaylistLinks.Read("https://music.youtube.com/playlist?list=" + pid, null);
+                            r.Name = yt.Name; r.Url = yt.Url;
+                            foreach (string t in yt.Tracks) if (!r.Tracks.Contains(t)) r.Tracks.Add(t);
+                            r.Total = Math.Max(r.Tracks.Count, yt.Total);
+                        }
+                        catch { }   // a private playlist: ask for a name instead
+                }
+                catch (Exception ex) { err = ex.Message; }
+                try { BeginInvoke((Action)(() => { plBusy = false; if (err != null) { plStatus = err; ShowToast(err); } else SaveRead(r, null); Invalidate(); })); } catch { }
+            });
+        }
+
+        void AddPlaylist(string presetName)
+        {
+            if (plBusy) return;
+            string text = "", name = presetName ?? "";
+            if (!AskPlaylist("Add a safe playlist",
+                    "Paste a Spotify, YouTube or YouTube Music playlist link.\n\nBig or private Spotify playlist? Links only share the first 100 songs. " +
+                    "Open the playlist in the Spotify app, click a song, press Ctrl+A then Ctrl+C, and paste here.",
+                    true, ref text, ref name, "Name (optional: taken from the playlist when possible). Pick one to add the songs to it:", true)) return;
+            text = text.Trim();
+            if (text.Length == 0) return;
+            plBusy = true; plStatus = "Reading…"; Invalidate();
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                PlaylistRead r = null; SafeList list = null; string err = null, url = null;
+                try
+                {
+                    if (PlaylistLinks.Recognizes(text)) r = PlaylistLinks.Read(text, pr => { plStatus = pr; QueueRepaint(); });
+                    else
+                    {
+                        // a link to a text/CSV list, or pasted "Artist - Title" lines
+                        if (System.Text.RegularExpressions.Regex.IsMatch(text, @"^https?://\S+$")) url = text;
+                        list = SafeLists.Parse(url != null ? SafeLists.Download(url) : text, url != null ? Uri.UnescapeDataString(new Uri(url).Segments.Last().Trim('/')) : null);
+                        if (list.Count == 0) throw new InvalidOperationException("No songs found. Paste a Spotify or YouTube playlist link, or songs copied from Spotify.");
+                    }
+                }
+                catch (Exception ex) { err = ex.Message; }
+                try
+                {
+                    BeginInvoke((Action)(() =>
+                    {
+                        plBusy = false;
+                        if (err != null) { plStatus = err; MessageBox.Show(this, err, "Add a safe playlist", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                        else if (list != null && !list.Playlist)
+                        {
+                            // labels / artists: a stream-safe list rather than a playlist
+                            string n = name.Length > 0 ? name : list.Name ?? "", none = null;
+                            if (n.Length == 0 && (!AskPlaylist("Name this list", "What should this list be called?", false, ref none, ref n, "Name:", false) || n.Length == 0)) { plStatus = "Not saved."; return; }
+                            list.Name = n;
+                            settings.Lists.AddParsed(list, url); settings.Save(); engine.Reevaluate();
+                            plStatus = "Added \"" + n + "\": " + CountText(list) + "."; ShowToast(plStatus);
+                        }
+                        else
+                        {
+                            if (list != null) r = new PlaylistRead { Name = list.Name, Source = url != null ? "Link" : "Pasted", Url = url, Tracks = list.Tracks, Total = list.Tracks.Count };
+                            SaveRead(r, name);
+                        }
+                        Invalidate();
+                    }));
+                }
+                catch { }
+            });
+        }
+
+        /// Saves what was read under the given name, the playlist's own name, or a name the streamer types.
+        void SaveRead(PlaylistRead r, string name)
+        {
+            string n = !string.IsNullOrWhiteSpace(name) ? name.Trim() : r.Name;
+            if (string.IsNullOrWhiteSpace(n))
+            {
+                n = ""; string none = null;
+                if (!AskPlaylist("Name this playlist", "SongSentry couldn't read this playlist's name (" + r.Tracks.Count + " songs). What should it be called?",
+                                 false, ref none, ref n, "Name, or pick a playlist to add the songs to:", true) || n.Length == 0) { plStatus = "Not saved."; return; }
+            }
+            int added;
+            var l = settings.Lists.SavePlaylist(n, r.Source, r.Url, r.Tracks, r.Total, out added);
+            settings.Save(); engine.Reevaluate();
+            string msg = added == l.Tracks.Count ? "Saved \"" + l.Name + "\": " + CountText(l)
+                                                 : "Added " + added + " new songs to \"" + l.Name + "\" (" + CountText(l) + ")";
+            if (r.Failed > 0) msg += ". " + r.Failed + " couldn't be read";
+            plStatus = msg + "."; ShowToast(msg);
+            if (r.Source == "Spotify" && r.Total > r.Tracks.Count)
+                MessageBox.Show(this, "Spotify links only share the first " + r.Tracks.Count + " of this playlist's " + r.Total + " songs.\n\n" +
+                                      "To add the rest: open the playlist in the Spotify app, click any song, press Ctrl+A then Ctrl+C. " +
+                                      "Then click Add playlist… again, paste, and pick \"" + l.Name + "\" as the name so the songs join this playlist.",
+                                "Only part of the playlist", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        void ShowPlaylistMenu(string id, Point at)
+        {
+            var l = settings.Lists.ById(id);
+            if (l == null) return;
+            var m = NewMenu();
+            Add(m, "Rename…", false, () =>
+            {
+                string n = l.Name, none = null;
+                if (AskPlaylist("Rename", "New name for \"" + l.Name + "\":", false, ref none, ref n, "Name:", false) && n.Length > 0) { settings.Lists.Rename(l.Id, n); settings.Save(); Invalidate(); }
+            });
+            Add(m, "Show songs…", false, () => ShowSongs(l));
+            Add(m, "Add songs (a link or copied songs)…", false, () => AddPlaylist(l.Name));
+            Add(m, "Add songs by scanning the playing playlist…", false, () => StartOrStopScan(l.Name));
+            if (PlaylistLinks.IsPlaylistLink(l.Url)) Add(m, "Check the link for new songs now", false, () => RefreshPlaylist(l));
+            m.Items.Add(new ToolStripSeparator());
+            Add(m, "Delete playlist", false, () => DeletePlaylist(l.Id));
+            m.Show(this, at);
+        }
+
+        void RefreshPlaylist(SafeList l)
+        {
+            plBusy = true; plStatus = "Checking \"" + l.Name + "\"…"; Invalidate();
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 string msg;
                 try
                 {
-                    string token = settings.PearToken;
-                    var songs = PearDesktop.Queue(settings.PearPort, ref token);
-                    settings.PearToken = token;
-                    foreach (var s in songs) engine.AddAllow("track:" + s);
-                    settings.Save();
-                    msg = songs.Count == 0 ? "Pear's queue is empty. Start the playlist in Pear first." : "Marked " + songs.Count + " songs from your Pear queue as safe.";
+                    var r = PlaylistLinks.Read(l.Url, null);
+                    int added = settings.Lists.AddTracks(l.Id, r.Tracks);
+                    l.Total = Math.Max(l.Total, r.Total);
+                    settings.Save(); engine.Reevaluate();
+                    msg = added == 0 ? "\"" + l.Name + "\" is up to date." : "Added " + added + " new songs to \"" + l.Name + "\".";
                 }
                 catch (Exception ex) { msg = ex.Message; }
-                try { BeginInvoke((Action)(() => { pearBusy = false; pearStatus = msg; ShowToast(msg); Invalidate(); })); } catch { }
+                try { BeginInvoke((Action)(() => { plBusy = false; plStatus = msg; ShowToast(msg); Invalidate(); })); } catch { }
             });
+        }
+
+        void DeletePlaylist(string id)
+        {
+            var l = settings.Lists.ById(id);
+            if (l == null) return;
+            if (MessageBox.Show(this, "Delete \"" + l.Name + "\" and its " + CountText(l) + "?\n\nThey'll no longer count as safe (unless they're in another playlist or list).",
+                                "Delete playlist", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            settings.Lists.Remove(id); settings.Save(); engine.Reevaluate();
+            plStatus = "Deleted \"" + l.Name + "\"."; ShowToast(plStatus); Invalidate();
+        }
+
+        void ShowSongs(SafeList l)
+        {
+            var lines = l.Labels.Select(x => "label: " + x).Concat(l.Artists.Select(x => "artist: " + x)).Concat(l.Tracks);
+            using (var f = DialogForm(l.Name + "  ·  " + CountText(l), 560, 460))
+            {
+                f.FormBorderStyle = FormBorderStyle.Sizable;
+                f.Controls.Add(new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None,
+                                             BackColor = Theme.Raised, ForeColor = Theme.Text, Text = string.Join("\r\n", lines) });
+                f.ShowDialog(this);
+            }
+        }
+
+        Form DialogForm(string title, int w, int h)
+        {
+            return new Form
+            {
+                Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false,
+                ShowInTaskbar = false, BackColor = Theme.Panel, ForeColor = Theme.Text, Font = new Font("Segoe UI", 9.5f),
+                AutoScaleMode = AutoScaleMode.Dpi, AutoScaleDimensions = new SizeF(96f, 96f), ClientSize = new Size(w, h), Icon = Icon
+            };
+        }
+
+        /// A small dialog: an optional paste box, then a name box that also offers the existing playlists (pick one to add to it).
+        bool AskPlaylist(string title, string intro, bool paste, ref string text, ref string name, string nameLabel, bool listExisting)
+        {
+            using (var f = DialogForm(title, 520, 100))
+            {
+                int y = 16, w = 488;
+                var font = f.Font;
+                var lab = new Label { Text = intro, Left = 16, Top = y, Width = w, ForeColor = Theme.Sub };
+                lab.Height = TextRenderer.MeasureText(intro, font, new Size(w, 0), TextFormatFlags.WordBreak).Height + 4;
+                f.Controls.Add(lab); y = lab.Bottom + 8;
+                TextBox box = null;
+                if (paste)
+                {
+                    box = new TextBox { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Left = 16, Top = y, Width = w, Height = 96,
+                                        BackColor = Theme.Raised, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Text = text ?? "" };
+                    f.Controls.Add(box); y = box.Bottom + 12;
+                }
+                var nl = new Label { Text = nameLabel, Left = 16, Top = y, Width = w, ForeColor = Theme.Sub };
+                nl.Height = TextRenderer.MeasureText(nameLabel, font, new Size(w, 0), TextFormatFlags.WordBreak).Height + 2;
+                f.Controls.Add(nl); y = nl.Bottom + 2;
+                var cb = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Left = 16, Top = y, Width = w, FlatStyle = FlatStyle.Flat,
+                                        BackColor = Theme.Raised, ForeColor = Theme.Text, Text = name ?? "" };
+                if (listExisting) foreach (var l in settings.Lists.Mine) cb.Items.Add(l.Name);
+                f.Controls.Add(cb); y = cb.Bottom + 18;
+                var ok = new Button { Text = paste ? "Add" : "Save", DialogResult = DialogResult.OK, Left = 16 + w - 196, Top = y, Width = 94, Height = 30,
+                                      FlatStyle = FlatStyle.Flat, BackColor = Theme.Accent, ForeColor = Theme.AccentInk };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 16 + w - 94, Top = y, Width = 94, Height = 30,
+                                          FlatStyle = FlatStyle.Flat, BackColor = Theme.Raised, ForeColor = Theme.Text };
+                ok.FlatAppearance.BorderSize = 0; cancel.FlatAppearance.BorderColor = Theme.Line;
+                f.Controls.Add(ok); f.Controls.Add(cancel);
+                f.AcceptButton = ok; f.CancelButton = cancel;
+                f.ClientSize = new Size(520, y + 30 + 16);
+                f.Shown += (s, e) => { if (box != null) box.Focus(); else { cb.Focus(); cb.SelectAll(); } };
+                if (f.ShowDialog(this) != DialogResult.OK) return false;
+                if (box != null) text = box.Text;
+                name = cb.Text.Trim();
+                return true;
+            }
         }
 
         void Radio(Graphics g, string id, bool on, float x, float y)
@@ -1331,29 +1612,34 @@ namespace SongSentry
             else if (id == "restore:end") { settings.Restore = RestoreMode.TrackEnd; settings.Save(); engine.Reevaluate(); }
             else if (id == "opt:listen") { settings.ListenToAudio = !settings.ListenToAudio; settings.Save(); UpdateAnim(); ShowToast(settings.ListenToAudio ? "Listening to your sources' audio" : "Audio recognition off (Now Playing only)"); }
             else if (id.StartsWith("risk:")) ShowRiskMenu((RiskLevel)Enum.Parse(typeof(RiskLevel), arg), e.Location);
-            else if (id == "list:import") ShowImportMenu(e.Location);
+            else if (id == "pl:add") AddPlaylist(null);
+            else if (id == "pl:file") ImportFile();
+            else if (id.StartsWith("plmenu:")) ShowPlaylistMenu(arg, e.Location);
+            else if (id.StartsWith("pldel:")) DeletePlaylist(arg);
             else if (id == "help:lists") ShowHelp("Stream-safe lists",
                 "Songs from the labels and artists on a switched-on list count as stream-safe, so SongSentry leaves them alone.\n\n" +
                 "FREE lists (StreamBeats, NCS, FiXT) are on by default: anyone may stream them.\n\n" +
                 "PAID lists have no login. Epidemic Sound, Monstercat, Artlist and others don't let apps check your subscription, " +
                 "so the switch simply means \"I have a license for this library\". Turn one on only if you really do: " +
                 "their music is only safe for subscribers, and you may also need to add your channel in their own website.\n\n" +
-                "Import… adds your own list from a file or link (\"Artist - Title\" per line, \"label: Name\", \"artist: Name\", or a CSV such as an Exportify playlist export).");
-            else if (id == "help:playlists") ShowHelp("Mark a whole playlist safe",
-                "Scan the playlist that's playing (Spotify, browsers, any player)\n" +
-                "Windows only tells SongSentry which song is playing, not which playlist, so you can't pick one from a list. " +
-                "Start your stream-safe playlist in the player and click Scan: SongSentry presses \"next\" every couple of seconds, " +
-                "marks each song safe, and stops when the playlist starts over (about 2 s per song).\n\n" +
-                "Pear Desktop (YouTube Music)\n" +
-                "Play the playlist in Pear and click \"Mark its playlist safe\": SongSentry reads Pear's whole queue at once, no skipping. " +
-                "Turn on Pear's API Server plugin first (Plugins menu); the first time, Pear asks you to Allow SongSentry.\n\n" +
-                "Only mark playlists whose songs you know are safe to play on stream.");
+                "Your own lists and playlists are on the Playlists page.");
+            else if (id == "help:playlists") ShowHelp("Safe playlists",
+                "Every song in a playlist you add here counts as stream-safe. Rename or delete whole playlists from their ••• menu; the switch turns one off without deleting it.\n\n" +
+                "Spotify or YouTube link\nPaste a playlist's Share link. YouTube and YouTube Music links read the whole playlist (public or unlisted). " +
+                "Spotify links only share the first 100 songs, and only of public playlists.\n\n" +
+                "Songs copied from Spotify (big or private playlists, Liked Songs)\nOpen the playlist in the Spotify app, click a song, press Ctrl+A then Ctrl+C, " +
+                "then paste into Add playlist. Every song is read (about a minute for 600 songs).\n\n" +
+                "Pear Desktop (YouTube Music)\nPlay the playlist in Pear and click Read Pear's playlist. Turn on Pear's API Server plugin first (Plugins menu); " +
+                "the first time, Pear asks you to Allow SongSentry.\n\n" +
+                "Scan (any player)\nWindows only tells SongSentry which song is playing, so Scan presses \"next\" every couple of seconds and saves each song until the playlist starts over.\n\n" +
+                "Playlists added from a link are checked again each time SongSentry starts, so songs you add later count too. " +
+                "Only add playlists whose songs you know are safe to play on stream.");
             else if (id.StartsWith("list:")) { if (settings.Lists.Enabled.Contains(arg)) settings.Lists.Enabled.Remove(arg); else settings.Lists.Enabled.Add(arg); settings.Save(); engine.Reevaluate(); }
             else if (id.StartsWith("listdel:")) { settings.Lists.Remove(arg); settings.Save(); engine.Reevaluate(); ShowToast("List removed"); }
             else if (id.StartsWith("safeapp:")) { bool on = settings.IsSafeApp(arg); if (on) engine.RemoveAllow(settings.AllowList().First(x => x.Equals("app:" + arg, StringComparison.OrdinalIgnoreCase))); else engine.AddAllow("app:" + arg); ShowToast(on ? AppKey.Pretty(arg) + " is checked normally again" : "All music from " + AppKey.Pretty(arg) + " counts as safe"); }
             else if (id == "scan:app") ShowScanAppMenu(e.Location);
-            else if (id == "scan:go") StartOrStopScan();
-            else if (id == "pear:go") AllowPearQueue();
+            else if (id == "scan:go") StartOrStopScan(null);
+            else if (id == "pear:go") ReadPear();
             else if (id == "opt:acoustid") { settings.UseAcoustId = !settings.UseAcoustId; settings.Save(); UpdateAnim(); ShowToast(settings.UseAcoustId ? "AcoustID on (free)" : "AcoustID off"); }
             else if (id == "mem:clear")
             {
@@ -1385,7 +1671,8 @@ namespace SongSentry
             else if (e.Control && e.KeyCode == Keys.D2) CurrentPage = Page.Channels;
             else if (e.Control && e.KeyCode == Keys.D3) CurrentPage = Page.Recognition;
             else if (e.Control && e.KeyCode == Keys.D4) CurrentPage = Page.SafeMusic;
-            else if (e.Control && e.KeyCode == Keys.D5) CurrentPage = Page.Settings;
+            else if (e.Control && e.KeyCode == Keys.D5) CurrentPage = Page.Playlists;
+            else if (e.Control && e.KeyCode == Keys.D6) CurrentPage = Page.Settings;
         }
 
         // ================================================================== actions
