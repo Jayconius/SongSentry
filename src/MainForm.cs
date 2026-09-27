@@ -957,7 +957,8 @@ namespace SongSentry
             // stream-safe lists
             var sl = new RectangleF(rx, y, colW, 300);
             Section(g, sl, "STREAM-SAFE LISTS");
-            LinkText(g, "list:import", "Import…", sl.Right - 18, sl.Y + 13, true);
+            float iw = LinkText(g, "list:import", "Import…", sl.Right - 18, sl.Y + 13, true);
+            LinkText(g, "help:lists", "How it works", sl.Right - 18 - iw - 18, sl.Y + 13, true);
             float sy = sl.Y + 36;
             var all = settings.Lists.All.ToList();
             int shown = 0;
@@ -983,7 +984,8 @@ namespace SongSentry
             // playlists
             var pl = new RectangleF(rx, sl.Bottom + 16, colW, H - sl.Bottom - 32);
             Section(g, pl, "PLAYLISTS  ·  MARK A WHOLE PLAYLIST SAFE");
-            Theme.Text2(g, "Scan a playlist (any player)", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 34, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
+            LinkText(g, "help:playlists", "How it works", pl.Right - 18, pl.Y + 13, true);
+            Theme.Text2(g, "Scan the playlist that's playing", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 34, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
             if (scanApp == null) scanApp = engine.Media.Where(x => x.State == PlayState.Playing).Select(x => x.App).FirstOrDefault() ?? engine.Media.Select(x => x.App).FirstOrDefault();
             var ap = new RectangleF(pl.X + 18, pl.Y + 60, 150, 30);
             Theme.Fill(g, ap, 8, hover == "scan:app" ? Theme.Hover : Theme.Raised);
@@ -991,11 +993,11 @@ namespace SongSentry
             Theme.Text2(g, Theme.GChevron, fIconS, Theme.Dim, new RectangleF(ap.Right - 22, ap.Y + 1, 14, ap.Height), StringAlignment.Center, StringAlignment.Center);
             Hit("scan:app", ap);
             Button(g, "scan:go", scanner.Running ? "Stop" : "Scan", ap.Right + 10, ap.Y - 1, 84, !scanner.Running);
-            Theme.Wrap(g, string.IsNullOrEmpty(scanner.Status) ? "Start your stream-safe playlist, then Scan: SongSentry skips through it and marks every song safe."
+            Theme.Wrap(g, string.IsNullOrEmpty(scanner.Status) ? "Plays through it: skips a song every ~2 s and marks each one safe. Start the playlist in your player first."
                        : scanner.Status, fTiny, scanner.Running ? Theme.Accent : Theme.Dim, new RectangleF(pl.X + 18, pl.Y + 96, colW - 36, 30));
-            Theme.Text2(g, "Pear Desktop (YouTube Music)", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 130, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
-            float pbx = Button(g, "pear:go", pearBusy ? "Waiting…" : "Allow my queue", pl.X + 18, pl.Y + 154, 0, false);
-            Theme.Wrap(g, pearStatus ?? "Marks Pear's whole queue safe. Needs its API Server plugin; Pear asks once.",
+            Theme.Text2(g, "Pear Desktop (YouTube Music): no skipping", fBodyB, Theme.Text, new RectangleF(pl.X + 18, pl.Y + 130, colW - 36, 20), StringAlignment.Near, StringAlignment.Center);
+            float pbx = Button(g, "pear:go", pearBusy ? "Waiting…" : "Mark its playlist safe", pl.X + 18, pl.Y + 154, 0, false);
+            Theme.Wrap(g, pearStatus ?? "Play the playlist in Pear, then click. Reads it all at once.",
                        fTiny, pearStatus != null ? Theme.Sub : Theme.Dim, new RectangleF(pbx + 12, pl.Y + 152, pl.Right - pbx - 30, 44));
         }
 
@@ -1045,6 +1047,11 @@ namespace SongSentry
                 });
             });
             m.Show(this, at);
+        }
+
+        void ShowHelp(string title, string text)
+        {
+            MessageBox.Show(this, text, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         void ShowScanAppMenu(Point at)
@@ -1324,9 +1331,25 @@ namespace SongSentry
             else if (id == "restore:end") { settings.Restore = RestoreMode.TrackEnd; settings.Save(); engine.Reevaluate(); }
             else if (id == "opt:listen") { settings.ListenToAudio = !settings.ListenToAudio; settings.Save(); UpdateAnim(); ShowToast(settings.ListenToAudio ? "Listening to your sources' audio" : "Audio recognition off (Now Playing only)"); }
             else if (id.StartsWith("risk:")) ShowRiskMenu((RiskLevel)Enum.Parse(typeof(RiskLevel), arg), e.Location);
+            else if (id == "list:import") ShowImportMenu(e.Location);
+            else if (id == "help:lists") ShowHelp("Stream-safe lists",
+                "Songs from the labels and artists on a switched-on list count as stream-safe, so SongSentry leaves them alone.\n\n" +
+                "FREE lists (StreamBeats, NCS, FiXT) are on by default: anyone may stream them.\n\n" +
+                "PAID lists have no login. Epidemic Sound, Monstercat, Artlist and others don't let apps check your subscription, " +
+                "so the switch simply means \"I have a license for this library\". Turn one on only if you really do: " +
+                "their music is only safe for subscribers, and you may also need to add your channel in their own website.\n\n" +
+                "Import… adds your own list from a file or link (\"Artist - Title\" per line, \"label: Name\", \"artist: Name\", or a CSV such as an Exportify playlist export).");
+            else if (id == "help:playlists") ShowHelp("Mark a whole playlist safe",
+                "Scan the playlist that's playing (Spotify, browsers, any player)\n" +
+                "Windows only tells SongSentry which song is playing, not which playlist, so you can't pick one from a list. " +
+                "Start your stream-safe playlist in the player and click Scan: SongSentry presses \"next\" every couple of seconds, " +
+                "marks each song safe, and stops when the playlist starts over (about 2 s per song).\n\n" +
+                "Pear Desktop (YouTube Music)\n" +
+                "Play the playlist in Pear and click \"Mark its playlist safe\": SongSentry reads Pear's whole queue at once, no skipping. " +
+                "Turn on Pear's API Server plugin first (Plugins menu); the first time, Pear asks you to Allow SongSentry.\n\n" +
+                "Only mark playlists whose songs you know are safe to play on stream.");
             else if (id.StartsWith("list:")) { if (settings.Lists.Enabled.Contains(arg)) settings.Lists.Enabled.Remove(arg); else settings.Lists.Enabled.Add(arg); settings.Save(); engine.Reevaluate(); }
             else if (id.StartsWith("listdel:")) { settings.Lists.Remove(arg); settings.Save(); engine.Reevaluate(); ShowToast("List removed"); }
-            else if (id == "list:import") ShowImportMenu(e.Location);
             else if (id.StartsWith("safeapp:")) { bool on = settings.IsSafeApp(arg); if (on) engine.RemoveAllow(settings.AllowList().First(x => x.Equals("app:" + arg, StringComparison.OrdinalIgnoreCase))); else engine.AddAllow("app:" + arg); ShowToast(on ? AppKey.Pretty(arg) + " is checked normally again" : "All music from " + AppKey.Pretty(arg) + " counts as safe"); }
             else if (id == "scan:app") ShowScanAppMenu(e.Location);
             else if (id == "scan:go") StartOrStopScan();
