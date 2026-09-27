@@ -1,0 +1,16 @@
+# build output
+build/
+dist/
+# local test secrets (AudD test key etc.) — never commit
+tests/audd.key
+*.key
+# test recordings may contain copyrighted music
+*.wav
+*.raw
+# internal notes and local-only feasibility tools (they read private recordings / keys)
+HANDOFF.md
+tests/
+# generated icon assets are rebuilt by build.ps1 (docs/ graphics ARE committed)
+assets/
+# downloaded Chromaprint tool (not used by 1.0)
+tools/fpcalc/
