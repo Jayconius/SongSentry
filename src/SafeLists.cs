@@ -332,6 +332,7 @@ namespace SongSentry
                     if (DateTime.TryParse(Json.Str(x, "added"), null, System.Globalization.DateTimeStyles.RoundtripKind, out at)) l.Added = at;
                     if (l.Id != null) Imported.Add(l);
                 }
+                Enabled.RemoveWhere(id => !BuiltIn.Any(b => b.Id == id) && !Imported.Any(x => x.Id == id));   // e.g. a stray "import" left by 1.1.0's Import… button bug
             }
         }
 

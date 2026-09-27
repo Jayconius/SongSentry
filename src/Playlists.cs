@@ -276,8 +276,14 @@ namespace SongSentry
             var e = SpotifyEntity(html);
             if (e == null) throw new InvalidOperationException(NotShared);
             r.Name = Json.Str(e, "name") ?? Json.Str(e, "title");
+            var cache = TrackCache();
             foreach (var t in Json.Objs(e.ContainsKey("trackList") ? e["trackList"] : null))
+            {
                 Add(r, Json.Str(t, "subtitle"), Json.Str(t, "title"));
+                string uri = Json.Str(t, "uri"), entry = Entry(Json.Str(t, "subtitle"), Json.Str(t, "title"));
+                if (uri != null && uri.StartsWith("spotify:track:") && entry != null) lock (cache) cache[uri.Substring(14)] = entry;
+            }
+            SaveTrackCache();
             r.Total = r.Tracks.Count;
             if (kind == "playlist" && r.Tracks.Count >= 100)
                 try
@@ -295,31 +301,53 @@ namespace SongSentry
         {
             var r = new PlaylistRead { Source = "Spotify", Total = ids.Count };
             var got = new string[ids.Count];
-            int next = -1, done = 0, failed = 0;
+            var cache = TrackCache();
+            lock (cache) for (int k = 0; k < ids.Count; k++) { string c; if (cache.TryGetValue(ids[k], out c)) got[k] = c; }
+            var todo = Enumerable.Range(0, ids.Count).Where(k => got[k] == null).ToList();
+            int next = -1, done = ids.Count - todo.Count, failed = 0;
+            long pauseUntil = 0;   // shared: when Spotify says "too many requests", every worker waits
             var workers = new List<Thread>();
             Tls();
-            for (int w = 0; w < Math.Min(6, ids.Count); w++)
+            if (progress != null && done > 0) progress("Reading copied songs… " + done + " of " + ids.Count + " (already known)");
+            for (int w = 0; w < Math.Min(3, todo.Count); w++)
             {
                 var th = new Thread(() =>
                 {
-                    int i;
-                    while ((i = Interlocked.Increment(ref next)) < ids.Count)
+                    int n;
+                    while ((n = Interlocked.Increment(ref next)) < todo.Count)
                     {
-                        for (int attempt = 0; attempt < 3 && got[i] == null; attempt++)
+                        int i = todo[n];
+                        for (int attempt = 0; attempt < 10 && got[i] == null; attempt++)
+                        {
+                            long wait = Interlocked.Read(ref pauseUntil) - DateTime.UtcNow.Ticks;
+                            if (wait > 0) Thread.Sleep(TimeSpan.FromTicks(wait));
                             try
                             {
                                 var e = SpotifyEntity(Get("https://open.spotify.com/embed/track/" + ids[i]));
                                 if (e == null) break;
                                 var artists = Json.Objs(e.ContainsKey("artists") ? e["artists"] : null).Select(a => Json.Str(a, "name")).Where(a => !string.IsNullOrEmpty(a));
                                 got[i] = Entry(string.Join(", ", artists), Json.Str(e, "name") ?? Json.Str(e, "title"));
+                                if (got[i] != null) lock (cache) cache[ids[i]] = got[i];
                             }
                             catch (WebException ex)
                             {
                                 var resp = ex.Response as HttpWebResponse;
-                                if (resp != null && (int)resp.StatusCode == 404) break;
-                                Thread.Sleep(1500 * (attempt + 1));   // 429 / network hiccup: slow down and retry
+                                int code = resp != null ? (int)resp.StatusCode : 0;
+                                if (code == 404 || code == 400) break;
+                                int secs = 2 + attempt * 2;
+                                if (code == 429)
+                                {
+                                    int ra;
+                                    if (int.TryParse(resp.Headers["Retry-After"], out ra)) secs = ra;
+                                    secs = Math.Max(3, Math.Min(60, secs));
+                                    if (progress != null) progress("Spotify asked SongSentry to slow down, waiting " + secs + " s… (" + Interlocked.CompareExchange(ref done, 0, 0) + " of " + ids.Count + ")");
+                                }
+                                long until = DateTime.UtcNow.AddSeconds(secs).Ticks;
+                                long cur;
+                                while ((cur = Interlocked.Read(ref pauseUntil)) < until && Interlocked.CompareExchange(ref pauseUntil, until, cur) != cur) { }
                             }
                             catch { break; }
+                        }
                         if (got[i] == null) Interlocked.Increment(ref failed);
                         int d = Interlocked.Increment(ref done);
                         if (progress != null && (d % 10 == 0 || d == ids.Count)) progress("Reading copied songs… " + d + " of " + ids.Count);
@@ -328,10 +356,36 @@ namespace SongSentry
                 th.Start(); workers.Add(th);
             }
             foreach (var th in workers) th.Join();
+            SaveTrackCache();
             foreach (string g in got) if (g != null && !r.Tracks.Contains(g)) r.Tracks.Add(g);
             r.Failed = failed;
             if (r.Tracks.Count == 0) throw new InvalidOperationException("Couldn't read the copied songs from Spotify. Check your internet connection and try again.");
             return r;
+        }
+
+        // Spotify track id -> "Artist - Title", so pasting a playlist again only looks up new songs
+        static Dictionary<string, string> trackCache;
+
+        static Dictionary<string, string> TrackCache()
+        {
+            if (trackCache != null) return trackCache;
+            var d = new Dictionary<string, string>();
+            try
+            {
+                string f = Paths.File("spotify-tracks.json");
+                if (File.Exists(f))
+                    foreach (var kv in Json.Read(File.ReadAllText(f, Encoding.UTF8)))
+                        if (kv.Value is string) d[kv.Key] = (string)kv.Value;
+            }
+            catch (Exception e) { Log.Write("spotify track cache unreadable: " + e.Message); }
+            return trackCache = d;
+        }
+
+        static void SaveTrackCache()
+        {
+            var c = TrackCache();
+            try { string json; lock (c) json = Json.Write(c); File.WriteAllText(Paths.File("spotify-tracks.json"), json, Encoding.UTF8); }
+            catch (Exception e) { Log.Write("spotify track cache not saved: " + e.Message); }
         }
 
         /// The "entity" object in a Spotify embed page (its __NEXT_DATA__ JSON), or null.
