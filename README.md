@@ -7,6 +7,7 @@
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20(2004%2B)%20%7C%2011-0B0E14?style=flat-square&logo=windows">
   <img alt="OBS 28+" src="https://img.shields.io/badge/OBS-28%2B%20(WebSocket%20v5)-0B0E14?style=flat-square&logo=obsstudio">
   <img alt="Single exe" src="https://img.shields.io/badge/install-none%20%C2%B7%20single%20exe-0B0E14?style=flat-square">
+  <img alt="RAM about 40 MB" src="https://img.shields.io/badge/RAM-~40%20MB-2DD4A7?style=flat-square">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-0B0E14?style=flat-square"></a>
 </p>
 
@@ -25,7 +26,8 @@ SongSentry also listens to the actual audio of each OBS source you protect, incl
 **learned into a local song memory**, so from then on it's recognized **offline, from the middle of the song,
 even under loud game sound**.
 
-It's free, it's a single ~220 KB exe with nothing to install, and it runs quietly in your tray.
+It's free, it's a single ~220 KB exe with nothing to install, and it runs quietly in your tray using **about 40 MB of RAM**
+(less than a single browser tab) and under 2 % of one CPU core, so it won't cost your stream or game any performance.
 
 ### Made for every kind of streamer
 
@@ -102,7 +104,9 @@ before, and why it gets better the more you stream.
 - 🧠 **Song memory**, offline and growing, ~32 KB per minute of music.
 - 🛡️ **Safe by design:** restores everything on quit, a crash journal puts sources back after a crash,
   "Pause protection" in the tray, and no admin rights needed.
-- 🪟 Tray app, starts with Windows (optional), reconnects to OBS by itself, and uses under 2 % of one CPU core.
+- 🪶 **Lightweight:** about **40 MB of RAM** and under 2 % of one CPU core while protecting, listening and learning.
+  The song memory on disk is ~32 KB per minute of music.
+- 🪟 Tray app, starts with Windows (optional), reconnects to OBS by itself.
 
 ## Getting started
 
@@ -170,7 +174,7 @@ audio per month free, and AudD 300 requests. Keys are per person; a key shared b
 They're optional. Now Playing and the song memory work without them.
 </details>
 
-<details><summary><b>Does it use a lot of CPU?</b></summary>
+<details><summary><b>Does it use a lot of RAM or CPU?</b></summary>
 
 No. Capturing audio costs almost nothing, and a song-memory check takes about 7 ms every 2 seconds per source.
 In testing the whole app used about 1.7 % of one CPU core and ~40 MB of RAM while protecting, listening to and learning a playing song.

@@ -39,6 +39,7 @@ game streamers, **VTubers**, IRL streamers, show hosts, podcasters and Just Chat
 - **Allow list:** artists, songs and **record labels**, plus one-click "Mark as safe".
 - Tray icon with notifications, **Pause protection**, **Start with Windows**, and automatic reconnection to OBS.
 - A new dark UI, DPI-aware, about 220 KB, no admin rights needed.
+- **Lightweight:** about **40 MB of RAM** and under 2 % of one CPU core while protecting, listening and learning (measured on a real setup).
 - Privacy: settings, keys (DPAPI-encrypted), song memory and a redacted log stay in `%LocalAppData%\SongSentry`.
 
 ## Known limitations
